@@ -31,6 +31,10 @@ generation, ECS schedulers, and anything else that eats frame time.
 **The bridge.** Download `tracy-roblox-bridge` from the same release. The Windows zip
 includes the matching Tracy viewer.
 
+**The Studio plugin (optional).** The
+[Tracy-Luau plugin](https://create.roblox.com/store/asset/120313821857622) connects to
+the bridge, sets places up, and takes captures with one click.
+
 Then:
 1. Turn on Game Settings → Security → Allow HTTP Requests.
 2. Start `tracy-roblox-bridge`, open Tracy, and connect to `127.0.0.1`.

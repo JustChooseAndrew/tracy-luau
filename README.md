@@ -152,5 +152,5 @@ Corporation.
 
 ## AI transparency
 
-Tracy-Luau's architecture was built by andrewdecker1, with development help, testing,
+Tracy-Luau's architecture was built by andrewdecker1 and ABC2gameYT, with development help, testing,
 and bug fixing by Claude, Anthropic's AI assistant.

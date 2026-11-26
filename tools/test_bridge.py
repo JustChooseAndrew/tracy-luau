@@ -285,6 +285,10 @@ def test_named_tracks():
 def test_concurrent_sessions():
     """Several server VMs at once each get their own track and lose nothing."""
     results = []
+    # Every session is open before any ends: a session that ends frees its track for
+    # the next one (by design), so without this a fast machine can run them back to
+    # back on fewer tracks.
+    all_open = threading.Barrier(4, timeout=30)
 
     def run():
         s = new_session()
@@ -301,6 +305,8 @@ def test_concurrent_sessions():
             final = fc.FLAG_FINAL if seq == 19 else 0
             code, _ = post(b.encode(s, seq, time.perf_counter(), final))
             ok = ok and code == 204
+            if seq == 0:
+                all_open.wait()
         results.append(ok)
 
     threads = [threading.Thread(target=run) for _ in range(4)]

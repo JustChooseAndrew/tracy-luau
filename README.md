@@ -148,3 +148,21 @@ Thanks to everyone who has helped with Tracy-Luau.
 Tracy-Luau is MIT licensed. It's an independent project, not affiliated with or
 endorsed by Roblox, the Luau team, or the Tracy project. Luau is a trademark of Roblox
 Corporation.
+
+## AI transparency
+
+Tracy-Luau was built with a lot of help from Claude, Anthropic's AI assistant, working
+in [Claude Code](https://claude.com/claude-code).
+
+- **Direction and decisions: JustChooseAndrew.** The plan and the architecture came
+  from the project's author: the Luau module, a local bridge, and a compact binary
+  protocol, built in phases. They chose and approved every feature along the way.
+- **Most of the code and docs: Claude, working from that plan.** That covers the Luau
+  module, the C++ bridge, the MicroProfiler importer and other tools, the tests, the CI
+  setup, and this documentation. Claude also ran the benchmarks and the Studio test
+  sessions.
+- **Testing.** Changes were checked with the automated tests, CI on Windows, macOS
+  and Linux, and Roblox Studio playtests before they were committed. The measured
+  numbers in the docs come from those runs.
+- **Responsibility: JustChooseAndrew,** who maintains the project. If something's
+  wrong, please open an issue on GitHub.

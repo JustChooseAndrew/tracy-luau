@@ -1,7 +1,7 @@
 # Tracy-Luau
 
 Tracy-Luau is a profiler for Roblox, built on [Tracy](https://github.com/wolfpld/tracy).
-Mark zones in your Luau code and press Play in Studio. The server and every client show
+Mark zones in your code and press Play in Studio. The server and every client show
 up on one timeline in Tracy's viewer, with the durations your code actually measured.
 In published games the same zones go to Roblox's MicroProfiler, and captures from live
 servers come back to your machine as Tracy traces.

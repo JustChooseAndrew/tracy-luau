@@ -11,6 +11,8 @@ the server and each client on one timeline, with the exact durations your code m
 In published games the same zones go to Roblox's MicroProfiler, and captures from live
 servers come back to your machine as Tracy traces.
 
+<img alt="Server and client zones from a Studio playtest in the Tracy viewer" src="docs/assets/tracy-zones.png">
+
 ## What is Tracy, and why use it?
 
 Tracy is a frame profiler used across the games industry.
@@ -111,6 +113,10 @@ Then download and convert the captures:
 ```powershell
 python tools/fetch_captures.py --universe <id> --convert
 ```
+
+A converted capture has every engine thread, with your zones among the engine's:
+
+<img alt="A converted MicroProfiler capture in the Tracy viewer, showing Roblox's main and worker threads" src="docs/assets/tracy-engine-capture.png">
 
 ## Learning Tracy-Luau
 

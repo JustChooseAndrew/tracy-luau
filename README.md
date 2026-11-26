@@ -1,4 +1,9 @@
-# Tracy-Luau
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-light.png">
+    <img alt="Tracy-Luau" src="docs/assets/logo-dark.png" width="480">
+  </picture>
+</h1>
 
 Tracy-Luau is a profiler for Roblox, built on [Tracy](https://github.com/wolfpld/tracy).
 Mark zones in your code and press Play in Studio. The server and every client show

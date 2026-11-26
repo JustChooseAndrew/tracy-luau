@@ -119,12 +119,14 @@ When a zone is still open at the end of a frame, because it yielded or errored b
 ## Switches
 
 Each switch is a constant at the top of the module, or an attribute on the `Tracy`
-ModuleScript. The attribute wins.
+ModuleScript. The attribute wins. The Tracy-Luau Studio plugin sets these for you.
 
 | Constant | Attribute | Effect |
 |---|---|---|
 | `ENABLED = false` | `Enabled` (bool) | nothing streams, in Studio too |
 | `MICROPROFILER` | `MicroProfiler` (string) | `"Live"`, `"Always"` or `"Off"`; see below |
+| | `Url` (string) | default bridge address for `Configure`, e.g. `http://127.0.0.1:8081/ingest` |
+| | `BuiltinPlots` (bool) | default for `Configure`'s `BuiltinPlots` |
 
 ## In live games
 

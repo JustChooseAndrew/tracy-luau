@@ -34,7 +34,8 @@ The first public release. The module and the bridge share this version.
 - **Leak-safe zones.** A zone still open at the end of a frame (it yielded or errored)
   is closed and labeled in the viewer, and warned about once by name. Its late
   `ZoneEnd` is ignored. `GetStats()` adds `ZonesLeaked` and `StrayEnds`.
-- **An `Enabled` attribute** on the ModuleScript overrides `ENABLED`.
+- **Attributes on the ModuleScript:** `Enabled` overrides `ENABLED`, and `Url` and `BuiltinPlots`
+  set `Configure`'s defaults.
 - **The module is now a folder** (`src/Tracy/init.luau` plus `Capture.luau`).
 
 ### Importer

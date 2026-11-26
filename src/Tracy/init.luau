@@ -251,6 +251,15 @@ if microProfiler ~= "Live" and microProfiler ~= "Always" and microProfiler ~= "O
 	warn(`[Tracy] MicroProfiler must be "Live", "Always" or "Off", not {tostring(microProfiler)}; using "Live"`)
 	microProfiler = "Live"
 end
+-- Defaults for Configure's Url and BuiltinPlots (the Tracy-Luau plugin sets these).
+local urlAttribute = script:GetAttribute("Url")
+if type(urlAttribute) == "string" and urlAttribute ~= "" then
+	config.Url = urlAttribute
+end
+local builtinPlotsAttribute = script:GetAttribute("BuiltinPlots")
+if type(builtinPlotsAttribute) == "boolean" then
+	config.BuiltinPlots = builtinPlotsAttribute
+end
 
 local profileBegin = debug.profilebegin
 local profileEnd = debug.profileend

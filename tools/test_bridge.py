@@ -1,12 +1,17 @@
 """Protocol tests for tracy-roblox-bridge. Runs an isolated bridge on test ports.
 
     python tools/test_bridge.py [--bridge build/tracy-roblox-bridge.exe] [--tracy-dir DIR]
+                                [--lute PATH --gprx CAPTURE]
 
 --tracy-dir points at a Tracy 0.15 release folder (tracy-capture, tracy-csvexport).
 With it, the data checks also confirm what Tracy itself recorded; without it they
 are skipped and only the HTTP and /status checks run.
+
+--lute and --gprx (a MicroProfiler capture) add the MicroProfiler conversion checks.
+They also need LibMP.luau next to tools/microprofiler/gprx2tlrec.luau.
 """
 import argparse
+import base64
 import json
 import os
 import random
@@ -26,6 +31,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HTTP_PORT = 18080
 TRACY_PORT = 18086
 URL = "http://127.0.0.1:%d/ingest" % HTTP_PORT
+CAPTURE_URL = "http://127.0.0.1:%d/capture" % HTTP_PORT
 EXE = ".exe" if os.name == "nt" else ""
 
 failures = []
@@ -564,9 +570,10 @@ def recording_tests(args):
         if os.path.exists(again) and os.path.exists(rec):
             check(recorded_stats(args.tracy_dir, again) == recorded_stats(args.tracy_dir, rec),
                   "--convert output matches the --record output")
-        r = subprocess.run([args.bridge, "--convert", rec, os.path.join(tmp, "x.tracy"), "--capture-tool", tool],
-                           capture_output=True, text=True, timeout=60)
-        check(r.returncode != 0 and "not a Tracy-Luau recording" in r.stderr, "--convert refuses a non-recording")
+        r = subprocess.run([args.bridge, "--convert", rec, os.path.join(tmp, "x.tracy"), "--capture-tool", tool,
+                            "--lute", os.path.join(tmp, "no-lute")], capture_output=True, text=True, timeout=60)
+        check(r.returncode != 0 and "MicroProfiler capture" in r.stderr and "Lute" in r.stderr,
+              "--convert reads a non-recording as a MicroProfiler capture, and says Lute is missing")
 
     # without --keep-raw the .tlrec goes away once the .tracy is written
     rec2, raw2 = os.path.join(tmp, "plain.tracy"), os.path.join(tmp, "plain.tlrec")
@@ -589,10 +596,88 @@ def recording_tests(args):
     check(r.returncode != 0 and "tracy-capture" in r.stderr, "missing tracy-capture is reported up front")
 
 
+# ---------------------------------------------------------------- capture tests
+
+def post_capture(body, info=None, content_type="application/octet-stream"):
+    req = urllib.request.Request(CAPTURE_URL, data=body, method="POST", headers={"Content-Type": content_type})
+    if info is not None:
+        req.add_header("X-Tracy-Capture", info)
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return r.status, r.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as e:
+        return e.code, e.read().decode("utf-8", "replace")
+
+
+def total_zones(tracy_dir, path):
+    stats, _ = zone_stats(tracy_dir, path)
+    return sum(z["count"] for z in stats.values())
+
+
+def capture_tests(args, have_tracy):
+    tmp = tempfile.mkdtemp(prefix="tracy_luau_cap_")
+    folder = os.path.join(tmp, "caps")
+    bridge = Bridge(args.bridge, ["--captures", folder, "--no-convert-captures"])
+    try:
+        code, _ = post_capture(b"x", content_type="text/plain")
+        check(code == 415, "/capture refuses a non-binary Content-Type (%d)" % code)
+        code, _ = post_capture(b"")
+        check(code == 400, "/capture refuses an empty body (%d)" % code)
+        data = os.urandom(300000)
+        stem = "20261125T000000Z-abc123"
+        code, _ = post_capture(data, json.dumps({"Id": stem, "Reason": "test"}))
+        path = os.path.join(folder, stem + ".gprx")
+        saved = open(path, "rb").read() if os.path.isfile(path) else None
+        check(code == 200 and saved == data, "/capture saves the capture byte-exact under its Id")
+        meta = os.path.join(folder, stem + ".json")
+        check(os.path.isfile(meta) and json.load(open(meta)).get("Reason") == "test",
+              "/capture saves the capture info next to it")
+        code, _ = post_capture(b"second", base64.b64encode(json.dumps({"Id": stem}).encode()).decode())
+        check(code == 200 and os.path.isfile(os.path.join(folder, stem + "-2.gprx")),
+              "a repeated Id gets its own file (info sent base64-encoded, as Tracy.Capture does)")
+        before = sorted(os.listdir(tmp))
+        code, _ = post_capture(b"evil", json.dumps({"Id": "../../escape"}))
+        stamped = [f for f in os.listdir(folder) if f.startswith("capture-") and f.endswith(".gprx")]
+        check(code == 200 and sorted(os.listdir(tmp)) == before and len(stamped) == 1,
+              "an unsafe Id can't leave the captures folder (saved as %s)" % stamped)
+        check(bridge.alive(), "bridge still running after the capture checks")
+    finally:
+        bridge.stop()
+
+    if not (have_tracy and args.lute and args.gprx):
+        print("  (MicroProfiler conversion checks skipped: pass --lute and --gprx)")
+        return
+    tool = os.path.join(args.tracy_dir, "tracy-capture" + EXE)
+    out = os.path.join(tmp, "direct.tracy")
+    r = subprocess.run([args.bridge, "--convert", args.gprx, out, "--capture-tool", tool, "--lute", args.lute],
+                       capture_output=True, text=True, timeout=300)
+    zones = total_zones(args.tracy_dir, out) if os.path.exists(out) else 0
+    check(r.returncode == 0 and zones > 0, "--convert turns a MicroProfiler capture into .tracy (%d zones) %s" % (
+        zones, r.stderr.strip()[-200:]))
+    check(not os.path.exists(os.path.join(tmp, "direct.import.tlrec")), "the intermediate .tlrec is removed")
+
+    folder2 = os.path.join(tmp, "auto")
+    bridge = Bridge(args.bridge, ["--captures", folder2, "--capture-tool", tool, "--lute", args.lute])
+    try:
+        with open(args.gprx, "rb") as f:
+            code, _ = post_capture(f.read(), json.dumps({"Id": "auto-1"}))
+        target = os.path.join(folder2, "auto-1.tracy")
+        deadline = time.time() + 180
+        while time.time() < deadline and not os.path.exists(target):
+            time.sleep(0.5)
+        time.sleep(1)  # let tracy-capture finish writing
+        auto = total_zones(args.tracy_dir, target) if os.path.exists(target) else 0
+        check(code == 200 and auto == zones, "/capture converts in the background (%d zones, same as --convert)" % auto)
+    finally:
+        bridge.stop()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--bridge", default=os.path.join(ROOT, "build", "tracy-roblox-bridge" + EXE))
     ap.add_argument("--tracy-dir", default=os.path.join(ROOT, ".tools", "tracy-0.15.0"))
+    ap.add_argument("--lute", default=None, help="Lute, for the MicroProfiler conversion checks")
+    ap.add_argument("--gprx", default=None, help="a MicroProfiler capture, for the conversion checks")
     args = ap.parse_args()
     have_tracy = os.path.isdir(args.tracy_dir)
 
@@ -662,6 +747,9 @@ def main():
         check(s["malformed"] > 0, "malformed batches were counted (%d)" % s["malformed"])
     finally:
         bridge.stop()
+
+    print("capture tests")
+    capture_tests(args, have_tracy)
 
     if have_tracy:
         print("recording tests")

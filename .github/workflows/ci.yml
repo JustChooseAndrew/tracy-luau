@@ -1,0 +1,148 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  TRACY_VERSION: "0.15.0"
+
+jobs:
+  luau:
+    name: Luau (lint, package, model)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Roblox tools (aftman.toml)
+        uses: ok-nick/setup-aftman@v0.4.2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: StyLua
+        run: stylua --check src examples bench
+
+      - name: selene
+        run: |
+          selene generate-roblox-std
+          selene src examples bench
+
+      - name: Wally package contents
+        run: wally package --list
+
+      - name: Build Tracy.rbxm
+        run: rojo build default.project.json --output Tracy.rbxm
+
+      - name: fetch_captures.py tests
+        run: python3 tools/test_fetch_captures.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Tracy.rbxm
+          path: Tracy.rbxm
+
+  bridge:
+    name: Bridge (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-x64
+            os: windows-latest
+            exe: tracy-roblox-bridge.exe
+          - name: macos-universal
+            os: macos-latest
+            exe: tracy-roblox-bridge
+            cmake_args: -DCMAKE_OSX_ARCHITECTURES=arm64;x86_64
+          - name: linux-x64
+            os: ubuntu-latest
+            exe: tracy-roblox-bridge
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Configure
+        run: >
+          cmake -S bridge -B build -DCMAKE_BUILD_TYPE=Release
+          "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=${{ github.workspace }}/build/bin"
+          "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE=${{ github.workspace }}/build/bin"
+          ${{ matrix.cmake_args && format('"{0}"', matrix.cmake_args) || '' }}
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Version
+        run: build/bin/${{ matrix.exe }} --version
+
+      # Without Tracy's tools the suite runs its HTTP, /status and /capture checks;
+      # the Tracy-side checks run locally (see README, Testing).
+      - name: Bridge tests
+        run: python tools/test_bridge.py --bridge build/bin/${{ matrix.exe }} --tracy-dir none
+
+      - name: Package
+        run: |
+          name=tracy-roblox-bridge-${{ matrix.name }}
+          mkdir -p dist/$name
+          cp build/bin/${{ matrix.exe }} dist/$name/
+          cp tools/microprofiler/gprx2tlrec.luau tools/fetch_captures.py README.md LICENSE dist/$name/
+          cp bridge/third_party/tracy/LICENSE dist/$name/LICENSE-tracy
+          cp bridge/third_party/httplib/LICENSE dist/$name/LICENSE-cpp-httplib
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            # The matching Tracy viewer and tracy-capture (BSD-3, license included), so
+            # one download has everything. Tracy publishes Windows binaries only.
+            curl -fsSL -o tracy.zip "https://github.com/wolfpld/tracy/releases/download/v${TRACY_VERSION}/windows-${TRACY_VERSION}.zip"
+            7z e tracy.zip -odist/$name tracy-profiler.exe tracy-capture.exe -r > /dev/null
+            test -f dist/$name/tracy-profiler.exe && test -f dist/$name/tracy-capture.exe
+            (cd dist && 7z a $name.zip $name > /dev/null)
+          else
+            # tar keeps the executable bit (upload-artifact doesn't)
+            tar -C dist -czf dist/$name.tar.gz $name
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bridge-${{ matrix.name }}
+          path: dist/tracy-roblox-bridge-*.*
+
+  release:
+    name: GitHub release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [luau, bridge]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+
+      - name: Release notes from CHANGELOG.md
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v v="$version" '
+            $0 == "## " v { on = 1; next }
+            on && /^## / { exit }
+            on { print }
+          ' CHANGELOG.md > notes.md
+          test -s notes.md || echo "See CHANGELOG.md." > notes.md
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" release/* --title "Tracy-Luau $GITHUB_REF_NAME" --notes-file notes.md

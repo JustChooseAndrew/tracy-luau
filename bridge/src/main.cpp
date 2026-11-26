@@ -4,6 +4,7 @@
 //
 //   tracy-roblox-bridge [--record session.tracy]      live (optionally recording)
 //   tracy-roblox-bridge --convert in.tlrec out.tracy  turn a recording into a .tracy file
+//   tracy-roblox-bridge --convert in.gprx out.tracy   ...or a MicroProfiler capture (needs Lute)
 
 // httplib first: on Windows it has to include winsock2.h before windows.h.
 #include "httplib.h"
@@ -21,10 +22,14 @@
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
+#include <cctype>
 #include <cstring>
+#include <ctime>
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace fs = std::filesystem;
 
@@ -76,6 +81,10 @@ struct Options
     bool keepRaw = false;
     std::string captureTool;
     std::string convertIn, convertOut;  // --convert mode
+    std::string captures = "captures";  // live: where POST /capture saves MicroProfiler captures
+    bool convertCaptures = true;        // ...and turns them into .tracy files when it can
+    std::string lute;                   // Lute, to run the MicroProfiler importer
+    std::string importer;               // gprx2tlrec.luau
 };
 
 void PrintUsage()
@@ -85,13 +94,20 @@ void PrintUsage()
         "Streams Tracy.luau profiling data from Roblox Studio into the Tracy profiler.\n\n"
         "Usage:\n"
         "  tracy-roblox-bridge [--port N] [--host ADDR] [--record FILE.tracy] [--verbose]\n"
-        "  tracy-roblox-bridge --convert IN.tlrec OUT.tracy\n\n"
+        "  tracy-roblox-bridge --convert IN.tlrec|IN.gprx OUT.tracy\n\n"
         "  --port N             HTTP port Tracy.luau posts to (default 8080)\n"
         "  --host ADDR          address to listen on (default 127.0.0.1; keep it local)\n"
         "  --record FILE.tracy  also save the session; written when the bridge stops (Ctrl+C).\n"
         "                       The live viewer keeps working while recording.\n"
         "  --keep-raw           keep the raw FILE.tlrec next to the .tracy file\n"
-        "  --convert IN OUT     turn a raw .tlrec recording into a .tracy file\n"
+        "  --convert IN OUT     turn a raw .tlrec recording, or a MicroProfiler capture (.gprx,\n"
+        "                       HTML dump, Tracy.Capture file), into a .tracy file\n"
+        "  --captures DIR       where captures POSTed to /capture are saved (default: captures)\n"
+        "  --no-convert-captures  save captures without converting them to .tracy\n"
+        "  --lute PATH          Lute, for MicroProfiler captures (default: next to this program,\n"
+        "                       then PATH)\n"
+        "  --importer PATH      gprx2tlrec.luau (default: next to this program, then\n"
+        "                       tools/microprofiler). LibMP.luau must sit beside it.\n"
         "  --capture-tool PATH  tracy-capture to write .tracy files with (default: next to\n"
         "                       this program, then PATH). Must be Tracy %d.%d.x.\n"
         "  --verbose            log every batch\n"
@@ -147,6 +163,28 @@ bool ParseArgs( int argc, char** argv, Options& opt, int& exitCode )
             opt.convertIn = in;
             opt.convertOut = out;
         }
+        else if( !std::strcmp( a, "--captures" ) )
+        {
+            const char* v = value();
+            if( !v ) return fail( "--captures needs a folder" );
+            opt.captures = v;
+        }
+        else if( !std::strcmp( a, "--no-convert-captures" ) )
+        {
+            opt.convertCaptures = false;
+        }
+        else if( !std::strcmp( a, "--lute" ) )
+        {
+            const char* v = value();
+            if( !v ) return fail( "--lute needs the path to lute" );
+            opt.lute = v;
+        }
+        else if( !std::strcmp( a, "--importer" ) )
+        {
+            const char* v = value();
+            if( !v ) return fail( "--importer needs the path to gprx2tlrec.luau" );
+            opt.importer = v;
+        }
         else if( !std::strcmp( a, "--verbose" ) || !std::strcmp( a, "-v" ) )
         {
             opt.verbose = true;
@@ -198,6 +236,75 @@ std::string MegabytesOf( const std::string& path )
     char text[32];
     std::snprintf( text, sizeof( text ), "%.1f MB", double( size ) / ( 1024.0 * 1024.0 ) );
     return text;
+}
+
+// ---------------------------------------------------------------- MicroProfiler import
+
+bool IsRecordingFile( const std::string& path )
+{
+    std::ifstream f( path, std::ios::binary );
+    char magic[8] = {};
+    f.read( magic, sizeof( magic ) );
+    return f.gcount() == 8 && std::memcmp( magic, "TLUAREC1", 8 ) == 0;
+}
+
+// gprx2tlrec.luau: --importer, else next to this program, else the repository's
+// tools/microprofiler (for a bridge built in place), else under the current folder.
+std::string FindImporter( const std::string& explicitPath )
+{
+    std::error_code ec;
+    if( !explicitPath.empty() ) return fs::is_regular_file( explicitPath, ec ) ? explicitPath : std::string();
+    const fs::path self = fs::path( tlb::SelfPath() ).parent_path();
+    const fs::path candidates[] = {
+        self / "gprx2tlrec.luau",
+        self / ".." / "tools" / "microprofiler" / "gprx2tlrec.luau",
+        fs::path( "tools" ) / "microprofiler" / "gprx2tlrec.luau",
+    };
+    for( const fs::path& c : candidates )
+    {
+        if( fs::is_regular_file( c, ec ) ) return fs::weakly_canonical( c, ec ).string();
+    }
+    return {};
+}
+
+struct ImportTools
+{
+    std::string lute, importer;
+    std::string problem;  // empty when both were found, with LibMP beside the importer
+};
+
+ImportTools FindImportTools( const Options& opt )
+{
+    ImportTools t;
+    t.lute = tlb::FindTool( opt.lute, "lute" );
+    t.importer = FindImporter( opt.importer );
+    std::error_code ec;
+    if( t.lute.empty() )
+        t.problem = "Lute isn't installed (https://github.com/luau-lang/lute/releases): put lute next to "
+                    "tracy-roblox-bridge, add it to PATH, or pass --lute";
+    else if( t.importer.empty() )
+        t.problem = "gprx2tlrec.luau wasn't found: put it next to tracy-roblox-bridge or pass --importer";
+    else if( !fs::is_regular_file( fs::path( t.importer ).parent_path() / "LibMP.luau", ec ) )
+        t.problem = "LibMP.luau isn't next to " + t.importer +
+                    " (download it from https://github.com/Roblox/libmp, MIT)";
+    return t;
+}
+
+// Runs the MicroProfiler importer: capture -> .tlrec recording.
+bool ImportCapture( const ImportTools& tools, const std::string& in, const std::string& tlrec, std::string& error )
+{
+    tlb::ChildProcess lute;
+    // --quiet: the importer prints only problems, which show on our console.
+    if( !tlb::SpawnProcess( tools.lute, { "run", tools.importer, in, tlrec, "--quiet" }, false, lute, error ) )
+        return false;
+    const int code = tlb::WaitProcess( lute, -1 );
+    std::error_code ec;
+    if( code != 0 || !fs::is_regular_file( tlrec, ec ) )
+    {
+        error = "the MicroProfiler importer failed (exit " + std::to_string( code ) + ") on " + in;
+        return false;
+    }
+    return true;
 }
 
 // ---------------------------------------------------------------- --convert
@@ -253,14 +360,54 @@ int RunConvert( const Options& opt )
     const std::string tool = CaptureToolOrComplain( opt.captureTool );
     if( tool.empty() ) return 1;
 
+    std::string input = opt.convertIn;
+    std::string imported;  // the .tlrec made from a MicroProfiler capture, removed at the end
+    std::error_code ec;
+    if( !fs::is_regular_file( input, ec ) )
+    {
+        std::fprintf( stderr, "%s doesn't exist\n", input.c_str() );
+        return 1;
+    }
+    if( !IsRecordingFile( input ) )
+    {
+        // Not a Tracy-Luau recording: treat it as a MicroProfiler capture.
+        const ImportTools tools = FindImportTools( opt );
+        if( !tools.problem.empty() )
+        {
+            std::fprintf( stderr,
+                          "%s isn't a Tracy-Luau recording, so it was read as a MicroProfiler capture, but %s.\n",
+                          input.c_str(), tools.problem.c_str() );
+            return 1;
+        }
+        imported = fs::path( opt.convertOut ).replace_extension( ".import.tlrec" ).string();
+        std::string importError;
+        if( !ImportCapture( tools, input, imported, importError ) )
+        {
+            std::fprintf( stderr, "%s\n", importError.c_str() );
+            fs::remove( imported, ec );
+            return 1;
+        }
+        input = imported;
+    }
+    struct RemoveImported
+    {
+        std::string path;
+        bool keep;
+        ~RemoveImported()
+        {
+            std::error_code e;
+            if( !path.empty() && !keep ) fs::remove( path, e );
+        }
+    } removeImported{ imported, opt.keepRaw };
+
     tlb::RecordingReader reader;
     std::string error;
-    if( !reader.Open( opt.convertIn, error ) )
+    if( !reader.Open( input, error ) )
     {
         std::fprintf( stderr, "%s\n", error.c_str() );
         return 1;
     }
-    const int64_t lead = ReplayLeadNs( opt.convertIn );
+    const int64_t lead = ReplayLeadNs( input );
 
     // A port of our own, so a live bridge (and its viewer) can keep running meanwhile.
     const int port = tlb::FreeLocalPort();
@@ -321,7 +468,6 @@ int RunConvert( const Options& opt )
 
     const int code = tlb::WaitProcess( capture, 120000 );
     if( code == -1 ) tlb::KillProcess( capture );
-    std::error_code ec;
     if( code != 0 || !fs::exists( opt.convertOut, ec ) )
     {
         std::fprintf( stderr, "tracy-capture failed (exit %d); %s was not written\n", code, opt.convertOut.c_str() );
@@ -332,6 +478,75 @@ int RunConvert( const Options& opt )
                  double( lastArrival ) / 1e9, reader.Truncated() ? "; the recording's last request was cut short" : "",
                  rejected ? "; some requests were malformed and skipped" : "" );
     return 0;
+}
+
+// ---------------------------------------------------------------- live: captures
+
+// Standard base64 (padding optional). Empty on any character outside the alphabet.
+std::string Base64Decode( const std::string& in )
+{
+    std::string out;
+    uint32_t acc = 0;
+    int bits = 0;
+    for( const char c : in )
+    {
+        int v;
+        if( c >= 'A' && c <= 'Z' ) v = c - 'A';
+        else if( c >= 'a' && c <= 'z' ) v = c - 'a' + 26;
+        else if( c >= '0' && c <= '9' ) v = c - '0' + 52;
+        else if( c == '+' ) v = 62;
+        else if( c == '/' ) v = 63;
+        else if( c == '=' ) break;
+        else return {};
+        acc = ( acc << 6 ) | uint32_t( v );
+        bits += 6;
+        if( bits >= 8 )
+        {
+            bits -= 8;
+            out += char( ( acc >> bits ) & 0xFF );
+        }
+    }
+    return out;
+}
+
+// X-Tracy-Capture: the capture info JSON. Tracy.Capture sends it base64-encoded,
+// because HttpService refuses "{" in header values; plain JSON is accepted too.
+std::string CaptureInfoFrom( const std::string& header )
+{
+    if( header.empty() || header[0] == '{' ) return header;
+    return Base64Decode( header );
+}
+
+// The capture's id from its X-Tracy-Capture JSON ("Id":"..."), if it's a plain
+// token; otherwise a timestamp. Never anything that could leave the folder.
+std::string CaptureFileStem( const std::string& info )
+{
+    std::string id;
+    size_t at = info.find( "\"Id\"" );
+    if( at != std::string::npos )
+    {
+        // "Id" : "value", with any whitespace around the colon
+        at += 4;
+        while( at < info.size() && std::isspace( (unsigned char)info[at] ) ) at++;
+        if( at < info.size() && info[at] == ':' ) at++;
+        while( at < info.size() && std::isspace( (unsigned char)info[at] ) ) at++;
+        if( at >= info.size() || info[at] != '"' ) at = info.size();
+        for( size_t i = at + 1; i < info.size() && info[i] != '"' && id.size() < 64; i++ )
+        {
+            const char c = info[i];
+            if( !( std::isalnum( (unsigned char)c ) || c == '-' || c == '_' ) )
+            {
+                id.clear();
+                break;
+            }
+            id += c;
+        }
+    }
+    if( !id.empty() ) return id;
+    char stamp[32];
+    const std::time_t now = std::time( nullptr );
+    std::strftime( stamp, sizeof( stamp ), "capture-%Y%m%dT%H%M%SZ", std::gmtime( &now ) );
+    return stamp;
 }
 
 // ---------------------------------------------------------------- live
@@ -385,6 +600,71 @@ int RunLive( const Options& opt )
         if( !outcome.text.empty() ) res.set_content( outcome.text, "text/plain" );
     } );
 
+    // MicroProfiler captures from Tracy.Capture's BridgeSink. Saved as-is, then
+    // converted to .tracy in the background when Lute, the importer and tracy-capture
+    // are all here.
+    const ImportTools importTools = FindImportTools( opt );
+    const std::string captureTool = tlb::FindCaptureTool( opt.captureTool );
+    const bool convertCaptures = opt.convertCaptures && importTools.problem.empty() && !captureTool.empty();
+    const fs::path capturesDir = fs::absolute( opt.captures );
+    server.Post( "/capture", [&]( const httplib::Request& req, httplib::Response& res ) {
+        if( req.get_header_value( "Content-Type" ).rfind( "application/octet-stream", 0 ) != 0 )
+        {
+            res.status = 415;
+            res.set_content( "Content-Type must be application/octet-stream", "text/plain" );
+            return;
+        }
+        if( req.body.empty() )
+        {
+            res.status = 400;
+            res.set_content( "empty capture", "text/plain" );
+            return;
+        }
+        std::error_code ec;
+        fs::create_directories( capturesDir, ec );
+        const std::string info = CaptureInfoFrom( req.get_header_value( "X-Tracy-Capture" ) );
+        const std::string stem = CaptureFileStem( info );
+        fs::path path = capturesDir / ( stem + ".gprx" );
+        for( int n = 2; fs::exists( path, ec ); n++ )
+            path = capturesDir / ( stem + "-" + std::to_string( n ) + ".gprx" );
+        {
+            std::ofstream out( path, std::ios::binary );
+            out.write( req.body.data(), std::streamsize( req.body.size() ) );
+            if( !out )
+            {
+                res.status = 500;
+                res.set_content( "could not write " + path.string(), "text/plain" );
+                return;
+            }
+        }
+        if( !info.empty() )
+        {
+            std::ofstream meta( fs::path( path ).replace_extension( ".json" ), std::ios::binary );
+            meta << info;
+        }
+        std::printf( "capture saved: %s (%s)\n", path.string().c_str(), MegabytesOf( path.string() ).c_str() );
+        res.set_content( "saved " + path.filename().string(), "text/plain" );
+        if( !convertCaptures ) return;
+        // A fresh process converts it (this one's Tracy client is the live viewer's).
+        const std::string out = fs::path( path ).replace_extension( ".tracy" ).string();
+        std::vector<std::string> args = { "--convert", path.string(), out, "--capture-tool", captureTool,
+                                          "--lute", importTools.lute, "--importer", importTools.importer };
+        std::thread( [args, out]() {
+            tlb::ChildProcess convert;
+            std::string error;
+            if( !tlb::SpawnProcess( tlb::SelfPath(), args, true, convert, error ) )
+            {
+                std::fprintf( stderr, "capture conversion failed: %s\n", error.c_str() );
+                return;
+            }
+            const int code = tlb::WaitProcess( convert, -1 );
+            if( code == 0 )
+                std::printf( "capture converted: %s\n", out.c_str() );
+            else
+                std::fprintf( stderr, "capture conversion failed (exit %d) for %s\n", code, out.c_str() );
+        } ).detach();
+    } );
+
     server.Get( "/status", [&]( const httplib::Request&, httplib::Response& res ) {
         res.set_content( router.StatusJson( tlb::emit::ViewerConnected() ), "application/json" );
     } );
@@ -408,6 +688,11 @@ int RunLive( const Options& opt )
     std::printf( "  Tracy viewer     open Tracy %d.%d.x and connect to 127.0.0.1\n", tracy::Version::Major,
                  tracy::Version::Minor );
     if( recorder.IsOpen() ) std::printf( "  Recording        %s (saved when you stop the bridge)\n", opt.record.c_str() );
+    const char* captureNote = convertCaptures          ? " and converted to .tracy"
+                              : !opt.convertCaptures   ? ""
+                              : captureTool.empty()    ? " (not converted: tracy-capture not found)"
+                                                       : " (not converted: Lute, gprx2tlrec.luau or LibMP missing)";
+    std::printf( "  Captures         saved to %s%s\n", capturesDir.string().c_str(), captureNote );
     std::printf( "  Ctrl+C to stop\n" );
 
     g_server = &server;

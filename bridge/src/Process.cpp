@@ -152,7 +152,7 @@ int FreeLocalPort()
     return port;
 }
 
-static const char* kCaptureName = "tracy-capture.exe";
+static const char* kExeSuffix = ".exe";
 static const char kPathSep = ';';
 
 #else
@@ -246,16 +246,17 @@ int FreeLocalPort()
     return port;
 }
 
-static const char* kCaptureName = "tracy-capture";
+static const char* kExeSuffix = "";
 static const char kPathSep = ':';
 
 #endif
 
-std::string FindCaptureTool( const std::string& explicitPath )
+std::string FindTool( const std::string& explicitPath, const std::string& name )
 {
     std::error_code ec;
     if( !explicitPath.empty() ) return fs::is_regular_file( explicitPath, ec ) ? explicitPath : std::string();
-    const fs::path besideSelf = fs::path( SelfPath() ).parent_path() / kCaptureName;
+    const std::string fileName = name + kExeSuffix;
+    const fs::path besideSelf = fs::path( SelfPath() ).parent_path() / fileName;
     if( fs::is_regular_file( besideSelf, ec ) ) return besideSelf.string();
     if( const char* path = std::getenv( "PATH" ) )
     {
@@ -267,7 +268,7 @@ std::string FindCaptureTool( const std::string& explicitPath )
             const std::string dir = all.substr( start, end == std::string::npos ? std::string::npos : end - start );
             if( !dir.empty() )
             {
-                const fs::path candidate = fs::path( dir ) / kCaptureName;
+                const fs::path candidate = fs::path( dir ) / fileName;
                 if( fs::is_regular_file( candidate, ec ) ) return candidate.string();
             }
             if( end == std::string::npos ) break;
@@ -275,6 +276,11 @@ std::string FindCaptureTool( const std::string& explicitPath )
         }
     }
     return {};
+}
+
+std::string FindCaptureTool( const std::string& explicitPath )
+{
+    return FindTool( explicitPath, "tracy-capture" );
 }
 
 }  // namespace tlb

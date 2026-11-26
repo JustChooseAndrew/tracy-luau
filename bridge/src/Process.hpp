@@ -27,8 +27,10 @@ void KillProcess( ChildProcess& child );
 
 // Full path of this executable.
 std::string SelfPath();
-// tracy-capture: the explicit path if given, else next to this executable, else on PATH.
-// Empty if not found.
+// A program: the explicit path if given, else `name` (plus .exe on Windows) next to
+// this executable, else on PATH. Empty if not found.
+std::string FindTool( const std::string& explicitPath, const std::string& name );
+// FindTool for tracy-capture.
 std::string FindCaptureTool( const std::string& explicitPath );
 // A TCP port on 127.0.0.1 that was free a moment ago.
 int FreeLocalPort();

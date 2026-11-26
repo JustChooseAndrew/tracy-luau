@@ -60,6 +60,7 @@ local variants: { { name: string, run: () -> () } } = {
 	},
 	{
 		name = "clock",
+		-- selene: allow(must_use)
 		run = function()
 			for i = 1, ZONES do
 				local _ = zoneNames[i]
@@ -133,7 +134,13 @@ local function report()
 		variants = {},
 	}
 	local lines = {
-		string.format("[TracyBench] %d zone pairs per frame, %d frames (Tracy active: %s, connected: %s)", ZONES, FRAMES, tostring(result.active), tostring(result.connected)),
+		string.format(
+			"[TracyBench] %d zone pairs per frame, %d frames (Tracy active: %s, connected: %s)",
+			ZONES,
+			FRAMES,
+			tostring(result.active),
+			tostring(result.connected)
+		),
 		"[TracyBench] net ms per frame after the bare loop  (median / p90 / p99)   ns per call",
 	}
 	for _, v in variants do
@@ -189,7 +196,7 @@ local function report()
 			result.flush.sent,
 			result.flush.failed,
 			result.flush.dropped,
-			s1.BufferBytes // 1024
+			math.floor(s1.BufferBytes / 1024)
 		)
 	)
 	table.insert(

@@ -22,8 +22,15 @@
 	forwards it; that needs this module required by at least one server Script.
 	Server and each client get their own track in Tracy, on one aligned timeline.
 
-	Every call is an empty function outside Studio, so markers can ship in a
-	published place. Set ENABLED below to false to switch them off in Studio too.
+	Markers can ship in a published place. Outside Studio nothing streams, and
+	zones go to Roblox's MicroProfiler instead (debug.profilebegin/profileend), so
+	they show up in MicroProfiler captures from live servers and clients. See
+	MICROPROFILER below to change that.
+
+	Wrap and Instrument add zones without writing ZoneBegin/ZoneEnd pairs:
+
+	    local update = Tracy.Wrap("Enemies", updateEnemies)
+	    Tracy.Instrument(EnemyService, "EnemyService") -- every function in the table
 
 	Cost: ~0.1 ms per frame for 500 zones (docs/BENCHMARKS.md). Cache the
 	functions in locals (local ZoneBegin = Tracy.ZoneBegin) for the fastest calls.
@@ -33,6 +40,8 @@
 	    (early returns included).
 	  * Don't yield (task.wait, WaitForChild, :InvokeServer, HTTP) between them.
 	    Other code runs during the yield and its zones would nest inside yours.
+	    A zone still open at the end of a frame (it yielded, or errored before
+	    ZoneEnd) is closed by Tracy, labeled in the viewer, and warned about once.
 	  * Use fixed zone and plot names. Each distinct name is registered once;
 	    names built per call ("Enemy " .. i) fill the 65k-name table.
 ]]
@@ -42,10 +51,23 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Stats = game:GetService("Stats")
 
--- Off = every call below becomes an empty function, in Studio as well.
+-- Off = nothing is recorded or streamed, in Studio as well (zones still go to the
+-- MicroProfiler, per MICROPROFILER). An "Enabled" attribute (boolean) on this
+-- ModuleScript overrides it.
 local ENABLED = true
 
-local VERSION = "0.3.0"
+-- When zones also go to Roblox's MicroProfiler through debug.profilebegin/end:
+--   "Live"   whenever Tracy isn't streaming: published games, and Studio with Tracy
+--            off. Your zones then appear in MicroProfiler captures and dumps from
+--            live games. A zone costs what debug.profilebegin costs (~0.17 µs per
+--            begin/end pair, measured in Studio).
+--   "Always" in Studio playtests too, next to streaming, so Studio's MicroProfiler
+--            shows them as well. Adds that cost to every zone.
+--   "Off"    never. Zones cost nothing when Tracy isn't streaming.
+-- A "MicroProfiler" attribute (string) on this ModuleScript overrides it.
+local MICROPROFILER = "Live"
+
+local VERSION = "0.5.0"
 
 -- Wire protocol v2 (docs/PROTOCOL.md).
 local PROTOCOL_VERSION = 2
@@ -62,6 +84,10 @@ local OP_FRAME_MARK_NAMED = 0x06
 local OP_ZONE_BEGIN_COLOR = 0x07
 local OP_MESSAGE = 0x08
 local OP_PLOT_CONFIG = 0x09
+local OP_ZONE_TEXT = 0x0B
+
+local LEAK_TEXT = "[Tracy] still open at the end of a frame (it yielded or errored before ZoneEnd); "
+	.. "closed by Tracy, so this duration runs to that point"
 
 local PLOT_FLAG_STEP = 1
 local PLOT_FLAG_FILL = 2
@@ -144,6 +170,10 @@ export type Stats = {
 	Clients: number,
 	-- Client: seconds added to this VM's clock to match the server's.
 	ClockOffset: number,
+	-- Zones Tracy closed because they were still open at the end of a frame.
+	ZonesLeaked: number,
+	-- ZoneEnd calls with no open zone, which were ignored.
+	StrayEnds: number,
 }
 
 export type Tracy = {
@@ -152,6 +182,12 @@ export type Tracy = {
 	ZoneBegin: (name: string, color: number?) -> (),
 	-- Closes the most recently opened zone.
 	ZoneEnd: () -> (),
+	-- Returns a function that runs `fn` inside a zone named `name`. Arguments and
+	-- results pass through. Where zones cost nothing, it returns `fn` itself.
+	Wrap: <A..., R...>(name: string, fn: (A...) -> R..., color: number?) -> (A...) -> R...,
+	-- Wraps every function stored under a string key in `target`, in place, as
+	-- zones named "prefix.key" (or just "key"). Returns `target`.
+	Instrument: <T>(target: T, prefix: string?, color: number?) -> T,
 	-- Marks the end of a frame. With a name, marks a separate frame set.
 	FrameMark: (name: string?) -> (),
 	-- Adds a sample to the named plot.
@@ -197,17 +233,102 @@ local function zeroStats(): Stats
 		RelayedBatches = 0,
 		Clients = 0,
 		ClockOffset = 0,
+		ZonesLeaked = 0,
+		StrayEnds = 0,
 	}
 end
 
+-- Settings; attributes on this ModuleScript win over the constants at the top.
+local enabled = ENABLED
+local enabledAttribute = script:GetAttribute("Enabled")
+if type(enabledAttribute) == "boolean" then
+	enabled = enabledAttribute
+end
+local microProfiler: any = script:GetAttribute("MicroProfiler") or MICROPROFILER
+if microProfiler ~= "Live" and microProfiler ~= "Always" and microProfiler ~= "Off" then
+	warn(`[Tracy] MicroProfiler must be "Live", "Always" or "Off", not {tostring(microProfiler)}; using "Live"`)
+	microProfiler = "Live"
+end
+
+local profileBegin = debug.profilebegin
+local profileEnd = debug.profileend
+
+local function checkWrapArgs(name: any, fn: any)
+	if type(name) ~= "string" then
+		error(`Tracy.Wrap: name must be a string, got {typeof(name)}`, 3)
+	end
+	if type(fn) ~= "function" then
+		error(`Tracy.Wrap: expected a function, got {typeof(fn)}`, 3)
+	end
+end
+
+-- Wrap on top of a begin/end pair (Tracy's own, or the MicroProfiler's).
+local function makeWrap(begin: (string, number?) -> (), finish: () -> ())
+	local function close(...: any): ...any
+		finish()
+		return ...
+	end
+	return function(name: string, fn: (...any) -> ...any, color: number?): (...any) -> ...any
+		checkWrapArgs(name, fn)
+		return function(...: any): ...any
+			begin(name, color)
+			return close(fn(...))
+		end
+	end
+end
+
+-- Functions Wrap made for Instrument, so instrumenting a table twice doesn't nest.
+local instrumented: { [any]: boolean } = setmetatable({} :: any, { __mode = "k" })
+
+local function makeInstrument(wrap: (string, (...any) -> ...any, number?) -> (...any) -> ...any)
+	return function(target: any, prefix: string?, color: number?): any
+		if type(target) ~= "table" then
+			error(`Tracy.Instrument expects a table, got {typeof(target)}`, 2)
+		end
+		if prefix ~= nil and type(prefix) ~= "string" then
+			error(`Tracy.Instrument: prefix must be a string, got {typeof(prefix)}`, 2)
+		end
+		if table.isfrozen(target) then
+			error("Tracy.Instrument: the table is frozen; instrument it before freezing", 2)
+		end
+		local base = if prefix ~= nil and prefix ~= "" then prefix .. "." else ""
+		local keys = {}
+		for key, value in target do
+			if type(key) == "string" and type(value) == "function" and not instrumented[value] then
+				table.insert(keys, key)
+			end
+		end
+		for _, key in keys do
+			local wrapped = wrap(base .. key, target[key], color)
+			instrumented[wrapped] = true
+			target[key] = wrapped
+		end
+		return target
+	end
+end
+
 -- IsRunning keeps plugin and command-bar requires in Edit mode quiet.
-local active = ENABLED and RunService:IsStudio() and RunService:IsRunning()
+local active = enabled and RunService:IsStudio() and RunService:IsRunning()
 
 if not active then
+	-- Nothing streams. Zones go to the MicroProfiler, or cost nothing with "Off".
+	local mirror = microProfiler ~= "Off"
+	local wrap = if mirror
+		then makeWrap(profileBegin :: any, profileEnd)
+		else function(name: string, fn: (...any) -> ...any, _color: number?)
+			checkWrapArgs(name, fn)
+			return fn
+		end
 	local off: Tracy = {
 		VERSION = VERSION,
-		ZoneBegin = noop :: any,
-		ZoneEnd = noop,
+		ZoneBegin = (if mirror then profileBegin else noop) :: any,
+		ZoneEnd = if mirror then profileEnd else noop,
+		Wrap = wrap :: any,
+		Instrument = (if mirror
+			then makeInstrument(wrap)
+			else function(target: any)
+				return target
+			end) :: any,
 		FrameMark = noop :: any,
 		Plot = noop :: any,
 		ConfigurePlot = noop :: any,
@@ -264,6 +385,16 @@ local statRttLast = 0
 local statRelayed = 0
 local statClients = 0
 local clockOffset = 0 -- client: seconds to add to os.clock() to get the server's clock
+
+-- Open zones on this VM, innermost last. Any still open when the frame ends
+-- yielded or errored inside the zone; Tracy closes them (closeLeakedZones).
+local depth = 0
+local openIds: { number } = table.create(32)
+local mirrorInStudio = microProfiler == "Always"
+local statLeaked = 0
+local statStray = 0
+local warnedLeak: { [number]: boolean } = {}
+local warnedStray = false
 
 ---------------------------------------------------------------- buffer management
 
@@ -413,6 +544,12 @@ local function zoneBegin(name: string, color: number?)
 	if id == nil then
 		id = register(name)
 	end
+	local d = depth + 1
+	depth = d
+	openIds[d] = id
+	if mirrorInStudio then
+		profileBegin(name)
+	end
 	if color == nil then
 		if off + 11 > cap and not ensure(11) then
 			return
@@ -434,8 +571,28 @@ local function zoneBegin(name: string, color: number?)
 	end
 end
 
+local function strayEnd()
+	statStray += 1
+	-- After Tracy closed a leaked zone, its late ZoneEnd lands here; that was
+	-- already warned about.
+	if not warnedStray and statLeaked == 0 then
+		warnedStray = true
+		warn("[Tracy] ZoneEnd with no open zone (an extra ZoneEnd?); ignored")
+	end
+end
+
 local function zoneEnd()
 	local t = os.clock()
+	local d = depth
+	if d == 0 then
+		-- Writing it could close a zone that belongs to other code.
+		strayEnd()
+		return
+	end
+	depth = d - 1
+	if mirrorInStudio then
+		profileEnd()
+	end
 	if off + 9 > cap and not ensure(9) then
 		return
 	end
@@ -443,6 +600,40 @@ local function zoneEnd()
 	buffer.writeu8(buf, o, OP_ZONE_END)
 	buffer.writef64(buf, o + 1, t)
 	off = o + 9
+end
+
+-- Runs once a frame, at a point where no Luau code is mid-zone: anything still
+-- open yielded inside its zone or errored before ZoneEnd. Close it now, with a
+-- note in the viewer, so the rest of the track stays correct.
+local function closeLeakedZones()
+	local d = depth
+	if d == 0 then
+		return
+	end
+	local t = os.clock()
+	local textLen = #LEAK_TEXT
+	for i = d, 1, -1 do
+		local id = openIds[i]
+		if not warnedLeak[id] then
+			warnedLeak[id] = true
+			warn(
+				`[Tracy] zone "{names[id]}" was still open at the end of a frame: it yielded or errored `
+					.. "before ZoneEnd. Tracy closed it and will ignore its late ZoneEnd."
+			)
+		end
+		if ensure(3 + textLen + 9) then
+			local o = off
+			buffer.writeu8(buf, o, OP_ZONE_TEXT)
+			buffer.writeu16(buf, o + 1, textLen)
+			buffer.writestring(buf, o + 3, LEAK_TEXT)
+			o += 3 + textLen
+			buffer.writeu8(buf, o, OP_ZONE_END)
+			buffer.writef64(buf, o + 1, t)
+			off = o + 9
+		end
+	end
+	statLeaked += d
+	depth = 0
 end
 
 local function frameMark(name: string?)
@@ -666,7 +857,8 @@ if isServer then
 		for i = 1, MAX_CLIENTS do
 			if not usedIndex[i] then
 				usedIndex[i] = true
-				local created: ClientInfo = { index = i, session = nil, seq = 0, clock = 0, offset = 0, greeted = false }
+				local created: ClientInfo =
+					{ index = i, session = nil, seq = 0, clock = 0, offset = 0, greeted = false }
 				clients[player] = created
 				pingNames[player] = `Ping Client {i} (ms)`
 				statClients += 1
@@ -686,7 +878,16 @@ if isServer then
 
 	local function finalFor(info: ClientInfo): buffer
 		local b = buffer.create(HEADER_SIZE)
-		writeHeader(b, info.index, FLAG_FINAL, info.session :: number, (info.seq + 1) % SEQ_MOD, info.clock, info.offset, 0)
+		writeHeader(
+			b,
+			info.index,
+			FLAG_FINAL,
+			info.session :: number,
+			(info.seq + 1) % SEQ_MOD,
+			info.clock,
+			info.offset,
+			0
+		)
 		return b
 	end
 
@@ -1033,16 +1234,14 @@ else
 end
 
 RunService.Heartbeat:Connect(function()
+	closeLeakedZones()
 	local now = os.clock()
 	if config.BuiltinPlots and now - lastBuiltin >= BUILTIN_PLOT_INTERVAL then
 		lastBuiltin = now
 		sampleBuiltins()
 	end
 	local since = now - lastFlush
-	if
-		since >= config.FlushInterval
-		or (off + relayBytes >= config.FlushBytes and since >= EARLY_FLUSH_INTERVAL)
-	then
+	if since >= config.FlushInterval or (off + relayBytes >= config.FlushBytes and since >= EARLY_FLUSH_INTERVAL) then
 		lastFlush = now
 		flush(false)
 	end
@@ -1078,10 +1277,14 @@ local function configure(options: Options)
 	end
 end
 
+local wrap = makeWrap(zoneBegin, zoneEnd)
+
 local api: Tracy = {
 	VERSION = VERSION,
 	ZoneBegin = zoneBegin,
 	ZoneEnd = zoneEnd,
+	Wrap = wrap :: any,
+	Instrument = makeInstrument(wrap) :: any,
 	FrameMark = frameMark,
 	Plot = plot,
 	ConfigurePlot = configurePlot,
@@ -1110,6 +1313,8 @@ local api: Tracy = {
 			RelayedBatches = statRelayed,
 			Clients = statClients,
 			ClockOffset = clockOffset,
+			ZonesLeaked = statLeaked,
+			StrayEnds = statStray,
 		}
 	end,
 }

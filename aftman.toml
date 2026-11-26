@@ -1,0 +1,6 @@
+# Roblox tooling for working on Tracy-Luau (https://github.com/LPGhatguy/aftman).
+[tools]
+rojo = "rojo-rbx/rojo@7.4.1"
+wally = "UpliftGames/wally@0.3.2"
+selene = "Kampfkarren/selene@0.25.0"
+stylua = "JohnnyMorganz/StyLua@0.18.2"

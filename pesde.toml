@@ -1,0 +1,17 @@
+# pesde names allow only lowercase letters, digits and underscores, hence tracy_lua
+# (the Wally package is justchooseandrew/tracy-lua).
+name = "justchooseandrew/tracy_lua"
+version = "0.5.0"
+description = "Tracy profiler for Roblox: stream Luau zones, plots and messages into Tracy, and turn live-game MicroProfiler captures into Tracy traces"
+license = "MIT"
+authors = ["justchooseandrew"]
+repository = "https://github.com/justchooseandrew/tracy-lua"
+includes = ["pesde.toml", "README.md", "LICENSE", "src/**/*.luau"]
+
+[target]
+environment = "roblox"
+lib = "src/Tracy/init.luau"
+build_files = ["src"]
+
+[indices]
+default = "https://github.com/pesde-pkg/index"

@@ -22,3 +22,6 @@ __pycache__/
 .idea/
 .DS_Store
 Thumbs.db
+
+# captures saved by the bridge or fetch_captures.py
+/captures/

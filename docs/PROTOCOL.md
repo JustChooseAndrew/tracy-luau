@@ -54,6 +54,11 @@ Events follow the header back to back, in the order they happened. `time` is the
 | `0x0A` | TRACK_NAME | `len u16, len bytes` | 3 + len |
 | `0x0B` | ZONE_TEXT | `len u16, len bytes`, text added to the innermost open zone | 3 + len |
 
+`ZONE_TEXT` comes from the importer (MicroProfiler labels) and from `Tracy.luau`. When a
+zone is still open at the end of a frame (it yielded or errored before `ZoneEnd`), the
+module sends a `ZONE_TEXT` saying so, then a `ZONE_END` at that moment, and ignores the
+zone's late `ZoneEnd`.
+
 **PLOT_CONFIG fields.**
 - `format`: 0 Number, 1 Memory (bytes), 2 Percentage.
 - `flags`: bit 0 step, bit 1 fill.
@@ -178,5 +183,38 @@ format. It uses one named session per MicroProfiler thread and one request per f
 
 `GET /status` returns JSON: bridge version, protocol, Tracy version, whether a viewer is
 connected, and per-track counters (`label`, `source`, `session`, `batches`, `events`,
-`gaps`, ...). The Studio plugin's connection light will read it (the plugin comes after
-the core is done).
+`gaps`, ...). The Studio plugin's connection light will read it.
+
+## Captures endpoint
+
+`POST /capture` takes one MicroProfiler capture from `Tracy.Capture.BridgeSink` (or
+anything else) and saves it.
+
+| Part | Content |
+|---|---|
+| `Content-Type` | `application/octet-stream`, or 415 (the same guard against web pages as `/ingest`) |
+| `X-Tracy-Capture` | optional: the capture info as JSON. `Tracy.Capture` base64-encodes it, because HttpService refuses `{` in header values. Plain JSON is accepted too |
+| body | the capture: any container LibMP reads |
+
+**Responses.**
+- **200** `saved <file>`. The capture is written to `--captures DIR` (default
+  `captures/`) as `<Id>.gprx`, with the info beside it as `<Id>.json`. The name comes
+  from the info's `Id` when that's a plain token (letters, digits, `-`, `_`), otherwise
+  a UTC timestamp. A taken name gets `-2`, `-3`, and so on.
+- **400** for an empty body.
+
+**Conversion.** When Lute, the importer (with LibMP beside it) and `tracy-capture` are
+all found, the bridge also converts each capture to `<Id>.tracy` in the background. It
+uses a separate process, so the live viewer is unaffected. `--no-convert-captures`
+turns that off.
+
+## DataStore layout (`Tracy.Capture.DataStoreSink`)
+
+| Key | Value (a Luau string) |
+|---|---|
+| `<Id>/1` ... `<Id>/N` | base64 of consecutive slices (2.4 MB each, at most) of the capture |
+| `<Id>` | the capture info as JSON, plus `Parts` (N), `Format` (`libmp-compressed`) and `Version` (1). Written last, so its presence marks a complete capture |
+
+`tools/fetch_captures.py` lists the keys through Open Cloud. It treats keys without a
+`/` as captures, reassembles the parts, and checks the total against the info's
+`Bytes`.

@@ -144,6 +144,31 @@ What did help:
 | `--convert` | 41 requests, 12.4 s of profiling, converted in about a second |
 | MicroProfiler dump from the Studio playtest (11.8 MB, 68 threads, 92 frames) | `gprx2tlrec` took 5.4 s under Lute and wrote a 5.9 MB `.tlrec`. That converted to a 1.3 MB `.tracy` with all 187,719 zones on 27 tracks, 106,617 labels as zone text, 506 GPU scopes placed on the CPU timeline, and 9 frame-stat plots |
 
+## 0.5: leak safety, mirroring, live captures
+
+The machine was busier during these runs: the bare `os.clock()` measured 24–25 ns
+against 21.6–26.2 ns before, and repeated runs of one build varied by over 30%.
+
+| | Measured |
+|---|---|
+| 500 zones per frame, module 0.5 (with open-zone tracking) | 0.106–0.129 ms per frame total, 74–94 ns per call. All 330,000 of 330,000 zones arrived |
+| Open-zone tracking alone, A/B against the same module without it | +2–6 ns per call in the quietest pair. The noisier pairs ranged up to +38 ns, which is noise |
+| `debug.profilebegin` + `debug.profileend` pair (the "Live" mirror), Studio command bar | 166 ns |
+| `Tracy.Capture`, 48 frames in a busy Play Solo session (fountain example, 600 parts) | 9.9–12.1 MB compressed. Taking it blocked the frame 44–95 ms, or 59 ms for a whole `Capture.Now()` call including the frame check |
+| Converting such a capture | 675,402 zones on 28 tracks. Identical from raw, compressed, ASCII and HTML containers |
+
+**MicroProfiler capture behavior in Studio.** Each of these was found by testing:
+- **Requested frame counts aren't honored.** Asking `CaptureToBufferSync` for a frame
+  count (`MaxFrameCount = 48`) returned 1–38 frames. Capturing everything it held, with
+  `SetFrameLimit` bounding the history, returned the full count. `Tracy.Capture` does
+  that.
+- **Too little memory means frameless captures.** With LibMP's default memory budget,
+  captures of a busy session held 0–29 frames, despite seconds of log data. With
+  `SetMemTargetMB(256)`, every capture held its full 64 frames.
+- **Right after the profiler is enabled,** captures come back hollow: frames with almost
+  no scopes, which convert to nothing. Captures from about 10 s after enabling were
+  complete. Hence `Warmup`, which `Capture.Now()` also waits out.
+
 ## Bugs found by measuring
 
 - **Tracy drops zero-length zones from its statistics.** `os.clock()` ticks every
@@ -163,3 +188,6 @@ What did help:
 - **Commas in zone names.** MicroProfiler names like
   `::PowerSelector, MainManager::step` broke naive parsing of `tracy-csvexport` output,
   which looked like lost zones. The tests now read CSV rows from the right.
+- **HttpService refuses `{` in header values.** The first `Tracy.Capture` HTTP sink sent
+  its info as JSON in a header, and every request failed. The info now travels
+  base64-encoded.

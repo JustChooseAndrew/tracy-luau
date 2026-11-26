@@ -56,7 +56,7 @@ local function usage(message: string?): never
 		print("gprx2tlrec: " .. message)
 	end
 	print("usage: lute run gprx2tlrec.luau capture.gprx capture.tlrec [--counters TEXT] [--all-counters]")
-	print("                                [--no-counters] [--no-gpu] [--no-labels] [--verbose]")
+	print("                                [--no-counters] [--no-gpu] [--no-labels] [--verbose] [--quiet]")
 	process.exit(2)
 	error("unreachable")
 end
@@ -65,6 +65,7 @@ local inputPath: string? = nil
 local outputPath: string? = nil
 local counterFilters = table.clone(DEFAULT_COUNTERS)
 local allCounters, withGpu, withLabels, verbose = false, true, true, false
+local quiet = false -- --quiet: print only problems (the bridge runs it this way)
 do
 	local args = process.args
 	local i = 2 -- args[1] is this script
@@ -84,6 +85,8 @@ do
 			withGpu = false
 		elseif a == "--no-labels" then
 			withLabels = false
+		elseif a == "--quiet" then
+			quiet = true
 		elseif a == "--verbose" then
 			verbose = true
 		elseif string.sub(a, 1, 2) == "--" then
@@ -432,6 +435,25 @@ it:Dispose()
 if pending then
 	writeRequest(maxTime, false)
 end
+if frames > 0 and zones == 0 then
+	print(
+		"gprx2tlrec: "
+			.. (inputPath :: string)
+			.. " has frames but no scopes in them. For a Tracy.Capture capture taken right after "
+			.. "Capture.Start, the MicroProfiler's history was still filling: capture later (see Warmup)."
+	)
+	process.exit(3)
+end
+if frames == 0 then
+	print(
+		"gprx2tlrec: "
+			.. (inputPath :: string)
+			.. " holds no complete frames, so there's nothing to put on a timeline. For a "
+			.. "Tracy.Capture capture, the MicroProfiler's history overflowed before the capture: "
+			.. "raise MemoryMB or lower Frames in Capture.Start."
+	)
+	process.exit(3)
+end
 
 ---------------------------------------------------------------- counters -> plots
 
@@ -529,6 +551,9 @@ for _, track in tracks do
 			print(string.format("  %-48s %7d zones", track.name, track.zones))
 		end
 	end
+end
+if quiet then
+	process.exit(0)
 end
 print(
 	string.format(

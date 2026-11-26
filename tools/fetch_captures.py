@@ -1,20 +1,21 @@
 """Downloads MicroProfiler captures that Tracy.Capture's DataStoreSink stored in a live game.
 
     python tools/fetch_captures.py --universe UNIVERSE_ID [--datastore TracyCaptures]
-                                   [--out captures] [--convert] [--delete]
+                                   [--out captures] [--convert [--bridge PATH]] [--delete]
+                                   [--key-env NAME]
 
-The Open Cloud API key comes from the ROBLOX_API_KEY environment variable (or the one
+The Open Cloud API key is read from the ROBLOX_API_KEY environment variable (or the one
 --key-env names), never from the command line. Create it in Creator Hub > Open Cloud >
-API Keys with the "universe-datastores.objects" read permission for your experience
-(add delete if you use --delete), and set it in your own shell:
+API Keys with the "universe-datastores.objects" list and read permissions for your
+experience (plus delete for --delete), then set it in your own shell:
 
     $env:ROBLOX_API_KEY = "<your key>"      # PowerShell
     export ROBLOX_API_KEY="<your key>"      # bash / zsh
 
-Each capture becomes OUT/<id>.gprx with its info in OUT/<id>.json. --convert then runs
-`tracy-roblox-bridge --convert` on each new one, for OUT/<id>.tracy (that needs Lute,
-LibMP and tracy-capture; see the README). --delete removes a capture from the DataStore
-once it is safely on disk. Captures already in OUT are skipped.
+Each capture is saved as OUT/<id>.gprx with its info in OUT/<id>.json; captures already
+in OUT are skipped. --convert also runs `tracy-roblox-bridge --convert` on each new one
+to write OUT/<id>.tracy (needs Lute, LibMP and tracy-capture; see docs/GUIDE.md). --delete
+removes a capture from the DataStore once it is on disk.
 
 Standard library only.
 """
@@ -49,12 +50,12 @@ class OpenCloud:
                     return r.read()
             except urllib.error.HTTPError as e:
                 if e.code == 429 or e.code >= 500:
-                    time.sleep(min(30, 2 ** attempt))  # rate limited or a hiccup: back off and retry
+                    time.sleep(min(30, 2 ** attempt))
                     continue
                 body = e.read().decode("utf-8", "replace")[:300]
                 if e.code in (401, 403):
                     raise SystemExit("Open Cloud refused the API key (%d): %s\nCheck that the key has DataStore "
-                                     "read access to universe %s (and delete access for --delete)."
+                                     "list and read access to universe %s (and delete access for --delete)."
                                      % (e.code, body, self.root.split("/universes/")[1].split("/")[0]))
                 raise RuntimeError("%s %s: HTTP %d %s" % (method, path, e.code, body))
         raise RuntimeError("%s %s: still rate limited after several retries" % (method, path))

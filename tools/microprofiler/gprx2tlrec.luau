@@ -19,6 +19,8 @@
 	  --no-counters     no plots at all
 	  --no-gpu          leave out the GPU track
 	  --no-labels       leave out scope labels
+	  --verbose         also print zones per thread
+	  --quiet           print only problems (how tracy-roblox-bridge runs it)
 
 	Needs Lute (https://github.com/luau-lang/lute) and LibMP.luau, Roblox's
 	MicroProfiler reader (https://github.com/Roblox/libmp/releases), placed next
@@ -259,8 +261,7 @@ end
 
 local started = os.clock()
 local source = fs.readFileToString(inputPath :: string)
--- OpenFromMem rather than OpenFromFile: the latter needs fs.readIntoBuffer, which
--- Lute 1.0 doesn't have.
+-- Not OpenFromFile: it needs fs.readIntoBuffer, which Lute 1.0 doesn't have.
 local session = LibMP.Session.OpenFromMem(source)
 if session == nil then
 	usage("LibMP could not read " .. (inputPath :: string) .. " (not a MicroProfiler dump?)")
@@ -460,7 +461,7 @@ end
 local counterTrack: Track? = nil
 local plotted = 0
 if allCounters or #counterFilters > 0 then
-	-- full paths ("frame_stats/basic/cpu_frame_time_microsec"); leaves only
+	-- Leaf counters only, matched by full path ("frame_stats/basic/cpu_frame_time_microsec").
 	local descs: { [number]: any } = {}
 	for _, id in mp:FetchCounterIds() do
 		descs[id] = mp:FetchCounterDesc(id)
@@ -515,8 +516,7 @@ if allCounters or #counterFilters > 0 then
 				u32(track.events, 0)
 			end
 		end
-		-- Frame by frame, so every plot's samples go forward in time (a track never
-		-- goes back in time in the bridge).
+		-- Frame by frame, since a track in the bridge never goes back in time.
 		for frameId = firstFrameId, lastFrameId do
 			local frame = frameDesc(frameId)
 			if frame then

@@ -1,15 +1,14 @@
 --[[
-	Tracy-Luau test example: a part fountain (server half).
+	Tracy-Luau example: a part fountain (server half).
 
 	Setup: Tracy.luau in ReplicatedStorage as "Tracy", this Script in
 	ServerScriptService, Fountain.client.luau in StarterPlayerScripts. Start
 	tracy-roblox-bridge, connect the Tracy viewer to 127.0.0.1, press Play.
 
 	Unlike the demos, nothing here busy-waits. Every Heartbeat the server launches
-	parts, scans the basin for parts that landed, and removes old ones, and each
-	step is a zone, so Tracy shows what the frame really spent its time on. The
-	spawn rate changes every few seconds: watch the zones and the "Fountain parts"
-	plot follow it, with a message at each new wave.
+	parts, counts the ones in the basin, and removes old ones, each step in its own
+	zone. The spawn rate changes every few seconds, with a message at each wave:
+	watch the zones and the "Fountain parts" plot follow it.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")

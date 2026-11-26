@@ -244,8 +244,8 @@ connection = RunService.Heartbeat:Connect(function()
 	end
 	Tracy.FrameMark()
 	if measuring then
-		-- worst round trip inside the measured window (the overall max includes the
-		-- playtest's first request)
+		-- Worst round trip inside the measured window. The overall max also counts
+		-- the playtest's first request.
 		local last = Tracy.GetStats().LastRoundTripSeconds
 		if last > windowRttMax then
 			windowRttMax = last

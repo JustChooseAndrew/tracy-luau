@@ -1,5 +1,5 @@
 --[[
-	Tracy-Luau test example: a part fountain (client half). Put this LocalScript in
+	Tracy-Luau example: a part fountain (client half). Put this LocalScript in
 	StarterPlayerScripts, next to Fountain.server.luau. It shows up in Tracy as the
 	"Roblox Client 1" track.
 

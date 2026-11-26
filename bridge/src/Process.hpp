@@ -1,4 +1,4 @@
-// Small cross-platform helpers for running tracy-capture and the bridge itself.
+// Cross-platform helpers for running tracy-capture, Lute and the bridge itself.
 #pragma once
 
 #include <string>
@@ -17,8 +17,8 @@ struct ChildProcess
     bool Valid() const;
 };
 
-// Starts `exe` with `args`. quietStdout sends the child's stdout to the null device
-// (stderr stays on our console, so its errors still show).
+// Starts `exe` with `args`. quietStdout discards the child's stdout; its stderr
+// still reaches our console.
 bool SpawnProcess( const std::string& exe, const std::vector<std::string>& args, bool quietStdout,
                    ChildProcess& child, std::string& error );
 // Exit code, or -1 if it is still running after timeoutMs.

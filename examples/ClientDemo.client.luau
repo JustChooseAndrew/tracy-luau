@@ -1,7 +1,7 @@
 --[[
-	Tracy-Luau client demo. Put this LocalScript in StarterPlayerScripts, next to
-	ServerDemo.server.luau (the server must require Tracy too: client data reaches
-	the bridge through it). It shows up in Tracy as the "Roblox Client 1" track.
+	Tracy-Luau client demo. Put this LocalScript in StarterPlayerScripts and run
+	ServerDemo.server.luau too: client data reaches the bridge through the server.
+	It shows up in Tracy as the "Roblox Client 1" track.
 
 	ClientDemo::Render busy-waits 0.5 ms per rendered frame, so the number in Tracy
 	can be checked against the code.

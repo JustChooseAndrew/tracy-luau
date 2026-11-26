@@ -5,8 +5,8 @@
 
 With --serve, the mock also accepts POST /seed?key=K (body = the stored string), so a
 Studio playtest can stand in for a live game: give Tracy.Capture.DataStoreSink a fake
-DataStore whose SetAsync posts there, then run fetch_captures.py with
---base-url http://127.0.0.1:8091 --universe 1 against it.
+DataStore whose SetAsync posts there, then point fetch_captures.py at the mock with
+--base-url http://127.0.0.1:8091 --universe 1.
 """
 import argparse
 import base64

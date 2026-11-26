@@ -20,10 +20,10 @@ add_library(TracyClient STATIC third_party/tracy/public/TracyClient.cpp)
 target_include_directories(TracyClient SYSTEM PUBLIC third_party/tracy/public)
 target_compile_definitions(TracyClient PUBLIC
   TRACY_ENABLE
-  # Accept viewer connections any time, and as many times as you like.
+  # Accept viewer connections at any time, any number of times.
   TRACY_ON_DEMAND
-  # The bridge starts and stops Tracy itself: --convert needs to pick the port first,
-  # and stopping cleanly is what hands the last events to the viewer.
+  # The bridge starts and stops Tracy itself: --convert picks the port first, and a
+  # clean stop is what hands the last events to the viewer.
   TRACY_DELAYED_INIT
   TRACY_MANUAL_LIFETIME
   # Nanosecond steady clock instead of raw TSC ticks, so Luau's os.clock() seconds

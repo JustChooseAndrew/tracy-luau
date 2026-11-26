@@ -87,8 +87,7 @@ jobs:
       - name: Version
         run: build/bin/${{ matrix.exe }} --version
 
-      # Without Tracy's tools the suite runs its HTTP, /status and /capture checks;
-      # the Tracy-side checks run locally (see README, Testing).
+      # --tracy-dir none skips the checks that need Tracy's tools; run those locally (docs/DEVELOPING.md).
       - name: Bridge tests
         run: python tools/test_bridge.py --bridge build/bin/${{ matrix.exe }} --tracy-dir none
 
@@ -101,8 +100,7 @@ jobs:
           cp bridge/third_party/tracy/LICENSE dist/$name/LICENSE-tracy
           cp bridge/third_party/httplib/LICENSE dist/$name/LICENSE-cpp-httplib
           if [ "${{ runner.os }}" = "Windows" ]; then
-            # The matching Tracy viewer and tracy-capture (BSD-3, license included), so
-            # one download has everything. Tracy publishes Windows binaries only.
+            # Tracy only ships Windows binaries, so bundle its viewer and tracy-capture here.
             curl -fsSL -o tracy.zip "https://github.com/wolfpld/tracy/releases/download/v${TRACY_VERSION}/windows-${TRACY_VERSION}.zip"
             7z e tracy.zip -odist/$name tracy-profiler.exe tracy-capture.exe -r > /dev/null
             test -f dist/$name/tracy-profiler.exe && test -f dist/$name/tracy-capture.exe

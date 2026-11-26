@@ -27,9 +27,9 @@ int64_t SecondsToNs( double seconds )
     return int64_t( std::llround( seconds * 1e9 ) );
 }
 
-// os.clock() is seconds since the Roblox process started. Anything non-finite or
-// beyond ~3 years is corrupt input, and one such value would drag the whole track
-// to the end of time, so the batch is rejected instead.
+// os.clock() is seconds since the Roblox process started, so anything non-finite or
+// beyond ~3 years is corrupt. One such value would stretch the whole track, so the
+// batch is rejected.
 bool ValidTime( double seconds )
 {
     return std::isfinite( seconds ) && seconds > -1e8 && seconds < 1e8;
@@ -129,8 +129,6 @@ LaneStats Lane::Stats()
 
 void Lane::Run()
 {
-    // The group hint orders tracks in the viewer: server, clients by number, then
-    // named (imported) tracks in the order they appeared.
     tracy::SetThreadNameWithHint( m_labelInterned, m_groupHint );
     for( ;; )
     {
@@ -247,8 +245,8 @@ void Lane::ZoneEnd( int64_t time )
     const OpenZone zone = m_zoneStack.back();
     m_zoneStack.pop_back();
     // os.clock() ticks every 100 ns, so a short zone can begin and end on the same
-    // tick. Tracy leaves zero-length zones out of its statistics entirely, so give
-    // them 1 ns (well inside the timer's error) and keep them counted.
+    // tick. Tracy leaves zero-length zones out of its statistics, so they get 1 ns,
+    // well inside the timer's error.
     if( time <= zone.begin )
     {
         time = zone.begin + 1;
@@ -290,9 +288,9 @@ IngestResult Lane::Replay( const std::string& body, const BatchHeader& header, C
 
     if( header.source != SourceServer && ref.valid )
     {
-        // A relayed client batch. Its clockOffset (measured by the client against the
-        // server) puts its times on the server's clock, and the server session's
-        // offset puts those on ours, so client and server tracks line up.
+        // A relayed client batch. Its clockOffset puts its times on the server's clock,
+        // and the server session's offset puts those on Tracy's, so client and server
+        // tracks line up.
         m_offsetNs = ref.offsetNs + SecondsToNs( header.clockOffset );
         m_haveOffset = true;
     }
@@ -428,7 +426,6 @@ IngestResult Lane::Replay( const std::string& body, const BatchHeader& header, C
                 error = "unknown plot format in PLOT_CONFIG";
                 break;
             }
-            // Tracy keeps plot settings and replays them to later viewers itself.
             emit::ConfigurePlot( PrefixedNameFor( id, unknown ), format, ( plotFlags & PlotFlagStep ) != 0,
                                  ( plotFlags & PlotFlagFill ) != 0, color & 0xFFFFFF );
             break;
@@ -503,8 +500,7 @@ IngestResult Lane::Replay( const std::string& body, const BatchHeader& header, C
             }
             const char* name = PrefixedNameFor( id, unknown );  // plots are global too
             const int64_t time = Map( t );
-            // A NaN or infinite sample (0/0 in game code) would wreck the plot's
-            // scale in the viewer; skip just that sample.
+            // A NaN or infinite sample (0/0 in game code) would wreck the plot's scale.
             if( connected && std::isfinite( value ) ) emit::Plot( name, time, value );
             break;
         }
@@ -598,16 +594,15 @@ Lane* Router::Route( const BatchHeader& header, int64_t now, std::string_view tr
         }
         else
         {
-            // "Server" / "Client 3" / an imported thread's own name; a second VM of the
-            // same kind at once (an Actor's own VM, say) becomes "Server #2".
+            // "Server", "Client 3" or an imported thread's name. A second VM of the same
+            // kind at once (an Actor's VM, say) becomes "Server #2".
             std::string shortLabel = named                          ? wantedName
                                      : header.source == SourceServer ? "Server"
                                                                      : "Client " + std::to_string( header.source );
             if( sameSource > 0 ) shortLabel += " #" + std::to_string( sameSource + 1 );
             const std::string label = named ? shortLabel : "Roblox " + shortLabel;
-            // The first server (or, in an import, the first named) track owns Tracy's
+            // The first server track (or first named track, in an import) owns Tracy's
             // default frame set, so the frame graph and FPS stats work with no setup.
-            // Other tracks get named sets.
             const bool primary = !m_defaultFrameSetTaken && ( header.source == SourceServer || named );
             if( primary ) m_defaultFrameSetTaken = true;
             const char* frameName = primary ? nullptr : m_interner.Intern( shortLabel );

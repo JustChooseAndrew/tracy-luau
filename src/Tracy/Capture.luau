@@ -3,12 +3,12 @@
 --[[
 	Tracy.Capture: MicroProfiler captures from live games, for Tracy.
 
-	When a server frame takes too long (or when you ask), this grabs the last few
+	When a server frame takes too long, or when you ask, this grabs the last few
 	dozen frames of Roblox's MicroProfiler and sends them out of the game. A capture
-	holds the engine's own work (physics, replication, scripts, GC...) and your
-	Tracy zones, which Tracy mirrors into the MicroProfiler in live games. Turn
-	captures into .tracy files with the tools in tools/microprofiler (see the README,
-	"Captures from live games").
+	holds the engine's work (physics, replication, scripts, GC) and your Tracy
+	zones, which Tracy mirrors into the MicroProfiler in live games. Convert
+	captures to .tracy files with tracy-roblox-bridge --convert (docs/GUIDE.md,
+	"In live games").
 
 	Needs LibMP (https://github.com/Roblox/libmp, MIT), Roblox's MicroProfiler API,
 	as a ModuleScript in your game. Server only.
@@ -31,9 +31,9 @@
 
 	Costs: the MicroProfiler keeps its frame history in memory (MemoryMB, default
 	256 MB), which is why SampleRate exists. Taking a capture blocks the frame while
-	it's compressed: ~15-50 ms for 64 busy frames in Studio tests. Sending happens
-	in the background. If converted captures come back with few or no frames, the
-	history overflowed: raise MemoryMB or lower Frames.
+	it's compressed, ~15-50 ms for 64 busy frames; sending happens in the background.
+	If converted captures have few or no frames, the history overflowed: raise
+	MemoryMB or lower Frames.
 ]]
 
 local DataStoreService = game:GetService("DataStoreService")
@@ -190,8 +190,8 @@ Capture._base64 = base64 -- for tests
 
 -- Stores each capture in a DataStore: "<id>/1".."<id>/N" hold base64 parts, then
 -- "<id>" holds the capture info (written last, so it marks a complete capture).
--- Fetch with tools/fetch_captures.py, which can also delete what it downloaded.
--- Captures count against the experience's DataStore storage and request budget.
+-- Captures count against the experience's DataStore storage and request budget;
+-- tools/fetch_captures.py --delete removes them once downloaded.
 -- Pass a DataStore name, or a DataStore you got yourself (to use a scope).
 function Capture.DataStoreSink(nameOrStore: string | DataStore): Sink
 	local name = if type(nameOrStore) == "string" then nameOrStore else tostring((nameOrStore :: any).Name)
@@ -281,8 +281,8 @@ end
 local function captureOnce(): (buffer?, number, number, string?)
 	local t0 = os.clock()
 	local ok, data = pcall(function()
-		-- Everything the MicroProfiler still holds (SetFrameLimit bounds it to Frames).
-		-- Asking for a frame count here returned fewer frames than asked in testing.
+		-- Everything the MicroProfiler holds (SetFrameLimit bounds it to Frames). A
+		-- nonzero MaxFrameCount can return fewer frames than asked.
 		return libmp.Control:CaptureToBufferSync({
 			MaxFrameCount = 0,
 			ContainerFormat = libmp.Enums.ContainerFormat.Compressed,
@@ -292,8 +292,7 @@ local function captureOnce(): (buffer?, number, number, string?)
 	if not ok or typeof(data) ~= "buffer" then
 		return nil, 0, ms, if ok then "LibMP returned no data" else tostring(data)
 	end
-	-- Count the complete frames. When the MicroProfiler's history overflows (too
-	-- little MemoryMB for how busy the frames are), a capture can hold none.
+	-- Count the complete frames; an overflowed history (see MemoryMB) can leave none.
 	local counted, frames = pcall(function()
 		local session = libmp.Session.OpenFromBuffer(data)
 		if session == nil then
@@ -378,8 +377,7 @@ local function take(reason: string, frameMs: number?): (boolean, string)
 			task.spawn(retry)
 		end
 	end
-	-- Right after Start the MicroProfiler's history is still filling, and captures
-	-- come back hollow (frames with little in them). Wait until it's ready.
+	-- Until Warmup ends the history is still filling and captures come back hollow.
 	local warming = options.Warmup - (os.clock() - startedAt)
 	if warming > 0 then
 		task.delay(warming, attempt)

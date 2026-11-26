@@ -22,31 +22,31 @@
 	    Tracy.Message("Wave 3 started")
 
 	Works from server Scripts and client LocalScripts. Clients can't make HTTP
-	requests, so their data goes to the server over a RemoteEvent and the server
-	forwards it; that needs this module required by at least one server Script.
-	Server and each client get their own track in Tracy, on one aligned timeline.
+	requests, so their data goes through the server, which needs this module
+	required by at least one server Script. The server and each client get their
+	own track on one aligned timeline.
 
-	Markers can ship in a published place. Outside Studio nothing streams, and
-	zones go to Roblox's MicroProfiler instead (debug.profilebegin/profileend), so
-	they show up in MicroProfiler captures from live servers and clients. See
-	MICROPROFILER below to change that.
+	Markers can ship in a published place. Outside Studio nothing streams and
+	zones go to Roblox's MicroProfiler instead, so they show up in MicroProfiler
+	captures from live servers and clients.
 
-	Wrap and Instrument add zones without writing ZoneBegin/ZoneEnd pairs:
+	Wrap and Instrument add zones without ZoneBegin/ZoneEnd pairs:
 
 	    local update = Tracy.Wrap("Enemies", updateEnemies)
 	    Tracy.Instrument(EnemyService, "EnemyService") -- every function in the table
 
-	Cost: ~0.1 ms per frame for 500 zones (docs/BENCHMARKS.md). Cache the
-	functions in locals (local ZoneBegin = Tracy.ZoneBegin) for the fastest calls.
+	Cost: ~0.1 ms per frame for 500 zones (docs/BENCHMARKS.md). Calls through
+	locals (local ZoneBegin = Tracy.ZoneBegin) are fastest. Settings: ENABLED and
+	MICROPROFILER below, and Tracy.Configure (see Options).
 
 	Rules:
 	  * Every ZoneBegin needs a ZoneEnd in the same function, on every path
 	    (early returns included).
-	  * Don't yield (task.wait, WaitForChild, :InvokeServer, HTTP) between them.
-	    Other code runs during the yield and its zones would nest inside yours.
-	    A zone still open at the end of a frame (it yielded, or errored before
-	    ZoneEnd) is closed by Tracy, labeled in the viewer, and warned about once.
-	  * Use fixed zone and plot names. Each distinct name is registered once;
+	  * Don't yield (task.wait, WaitForChild, :InvokeServer, HTTP) between them:
+	    other code runs during the yield and its zones would nest inside yours.
+	    Tracy closes any zone still open at the end of a frame (it yielded or
+	    errored), labels it in the viewer, and warns once.
+	  * Use fixed zone and plot names. Each distinct name is registered once, so
 	    names built per call ("Enemy " .. i) fill the 65k-name table.
 ]]
 
@@ -62,9 +62,8 @@ local ENABLED = true
 
 -- When zones also go to Roblox's MicroProfiler through debug.profilebegin/end:
 --   "Live"   whenever Tracy isn't streaming: published games, and Studio with Tracy
---            off. Your zones then appear in MicroProfiler captures and dumps from
---            live games. A zone costs what debug.profilebegin costs (~0.17 µs per
---            begin/end pair, measured in Studio).
+--            off. Zones then appear in MicroProfiler captures and dumps from live
+--            games, at debug.profilebegin's cost (~0.17 µs per begin/end pair).
 --   "Always" in Studio playtests too, next to streaming, so Studio's MicroProfiler
 --            shows them as well. Adds that cost to every zone.
 --   "Off"    never. Zones cost nothing when Tracy isn't streaming.
@@ -190,7 +189,7 @@ export type Tracy = {
 	-- results pass through. Where zones cost nothing, it returns `fn` itself.
 	Wrap: <A..., R...>(name: string, fn: (A...) -> R..., color: number?) -> (A...) -> R...,
 	-- Wraps every function stored under a string key in `target`, in place, as
-	-- zones named "prefix.key" (or just "key"). Returns `target`.
+	-- zones named "prefix.key" ("key" without a prefix). Returns `target`.
 	Instrument: <T>(target: T, prefix: string?, color: number?) -> T,
 	-- Marks the end of a frame. With a name, marks a separate frame set.
 	FrameMark: (name: string?) -> (),
@@ -242,7 +241,6 @@ local function zeroStats(): Stats
 	}
 end
 
--- Settings; attributes on this ModuleScript win over the constants at the top.
 local enabled = ENABLED
 local enabledAttribute = script:GetAttribute("Enabled")
 if type(enabledAttribute) == "boolean" then
@@ -315,7 +313,6 @@ end
 local active = enabled and RunService:IsStudio() and RunService:IsRunning()
 
 if not active then
-	-- Nothing streams. Zones go to the MicroProfiler, or cost nothing with "Off".
 	local mirror = microProfiler ~= "Off"
 	local wrap = if mirror
 		then makeWrap(profileBegin :: any, profileEnd)
@@ -390,8 +387,7 @@ local statRelayed = 0
 local statClients = 0
 local clockOffset = 0 -- client: seconds to add to os.clock() to get the server's clock
 
--- Open zones on this VM, innermost last. Any still open when the frame ends
--- yielded or errored inside the zone; Tracy closes them (closeLeakedZones).
+-- Open zones on this VM, innermost last.
 local depth = 0
 local openIds: { number } = table.create(32)
 local mirrorInStudio = microProfiler == "Always"
@@ -450,8 +446,8 @@ local function reRegisterAll(keepEvents: boolean)
 	local need = HEADER_SIZE + regs + events
 	local start = HEADER_SIZE + regs
 	if need <= cap then
-		-- Rebuild in place (no garbage): move the kept events first (buffer.copy is
-		-- overlap-safe), then rewrite the names in front of them.
+		-- Rebuild in place to avoid garbage. buffer.copy is overlap-safe, so move the
+		-- kept events first, then rewrite the names in front of them.
 		if events > 0 and start ~= regEnd then
 			buffer.copy(buf, start, buf, regEnd, events)
 		end
@@ -577,8 +573,7 @@ end
 
 local function strayEnd()
 	statStray += 1
-	-- After Tracy closed a leaked zone, its late ZoneEnd lands here; that was
-	-- already warned about.
+	-- A leaked zone's late ZoneEnd also lands here, and was already warned about.
 	if not warnedStray and statLeaked == 0 then
 		warnedStray = true
 		warn("[Tracy] ZoneEnd with no open zone (an extra ZoneEnd?); ignored")
@@ -801,8 +796,7 @@ local flush: (final: boolean) -> boolean
 local resetConnection: () -> () = noop
 
 if isServer then
-	-- The server posts to the bridge over HTTP, one request at a time, and carries
-	-- client batches (relayed over a RemoteEvent) inside its own requests.
+	-- Server: posts to the bridge over HTTP and forwards the clients' batches.
 	local inFlight = false
 	local warnedUnreachable = false
 	local warnedThrottle = false
@@ -1012,8 +1006,8 @@ if isServer then
 		local reason = describeFailure(ok, result)
 
 		if string.find(reason, "exceeded limit", 1, true) or string.find(reason, "429", 1, true) then
-			-- HttpService's per-server budget is spent (the game shares it). The bridge is
-			-- fine; hold off so the game's own requests get through, then send a bigger batch.
+			-- HttpService's per-server budget is spent; the bridge is fine. Hold off so the
+			-- game's own requests get through, then send a bigger batch.
 			throttledUntil = os.clock() + THROTTLE_BACKOFF
 			if not warnedThrottle then
 				warnedThrottle = true
@@ -1163,8 +1157,7 @@ if isServer then
 		closed = true
 	end)
 else
-	-- A client can't use HttpService, so its batches go to the server over the
-	-- relay RemoteEvent, and the server forwards them with its own.
+	-- Client: batches go to the server over the relay RemoteEvent.
 	local relay: RemoteEvent? = nil
 	local bestRtt = math.huge
 

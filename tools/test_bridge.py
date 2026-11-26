@@ -4,8 +4,8 @@
                                 [--lute PATH --gprx CAPTURE]
 
 --tracy-dir points at a Tracy 0.15 release folder (tracy-capture, tracy-csvexport).
-With it, the data checks also confirm what Tracy itself recorded; without it they
-are skipped and only the HTTP and /status checks run.
+With it, the data checks also confirm what Tracy recorded; without it only the HTTP,
+/status and /capture checks run.
 
 --lute and --gprx (a MicroProfiler capture) add the MicroProfiler conversion checks.
 They also need LibMP.luau next to tools/microprofiler/gprx2tlrec.luau.
@@ -73,8 +73,8 @@ def new_session():
 def past(span):
     """A start time `span` seconds ago, so a fabricated timeline ends before it is sent.
 
-    Waits `span` first: sessions reuse tracks, and a track never goes back in time, so
-    a test's timeline must start after the previous test's ended (as real playtests do).
+    Waits `span` first: sessions reuse tracks and a track never goes back in time, so
+    each test's timeline must start after the previous one's ended.
     """
     time.sleep(span + 0.02)
     return time.perf_counter() - span
@@ -138,10 +138,9 @@ def csvexport(tracy_dir, *args):
 
 
 def zone_stats(tracy_dir, path):
-    # One row per source location. The same zone name on several tracks is several
-    # rows, so merge rows by name and remember which tracks it appeared on.
-    # Zone names can contain commas (MicroProfiler's do), so read each row from the
-    # right: name, src_file, then 8 numeric columns.
+    # Rows are per source location, so a name used on several tracks has several rows:
+    # merge them by name and keep the set of tracks. Names can contain commas
+    # (MicroProfiler's do), so read columns from the right: name, src_file, 8 numbers.
     stats = {}
     for row in csvexport(tracy_dir, path).splitlines()[1:]:
         cols = row.split(",")
@@ -229,8 +228,7 @@ def test_colors_messages_plots():
 
 
 def test_relay_alignment():
-    """A server batch and a relayed client batch in one request: the client gets its own
-    track, and clockOffset lines its events up with the server's."""
+    """A client batch relayed with a server batch gets its own track, aligned by clockOffset."""
     server, client = new_session(), new_session()
     t = past(0.11)
     clock_offset = 12.5  # client clock runs 12.5 s behind the server's
@@ -252,7 +250,6 @@ def test_relay_alignment():
             cb.encode(client, 0, now - clock_offset, source=1, clock_offset=clock_offset))
     code, text = post(body)
     check(code == 204, "server + client batch in one request accepted (HTTP %d %r)" % (code, text))
-    # end both sessions
     now = time.perf_counter()
     post(fc.Batch().encode(server, 1, now, fc.FLAG_FINAL) +
          fc.Batch().encode(client, 1, now - clock_offset, fc.FLAG_FINAL, source=1, clock_offset=clock_offset))
@@ -285,9 +282,8 @@ def test_named_tracks():
 def test_concurrent_sessions():
     """Several server VMs at once each get their own track and lose nothing."""
     results = []
-    # Every session is open before any ends: a session that ends frees its track for
-    # the next one (by design), so without this a fast machine can run them back to
-    # back on fewer tracks.
+    # Hold every session open until all have started: an ended session frees its track,
+    # so otherwise a fast machine can run them back to back on fewer tracks.
     all_open = threading.Barrier(4, timeout=30)
 
     def run():
@@ -419,7 +415,7 @@ def test_malformed():
     }
     for name, body in cases.items():
         code, text = post(body)
-        # a single bad batch is either refused outright (400) or reported per batch (200 + "error")
+        # refused outright (400) or reported per batch (200 + "error")
         rejected = code == 400 or (code == 200 and text.startswith("error"))
         check(rejected, "%s rejected (HTTP %d %r)" % (name, code, text[:40]))
     post(header(s, 10, t, 0, flags=fc.FLAG_FINAL))

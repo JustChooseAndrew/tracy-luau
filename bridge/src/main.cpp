@@ -310,10 +310,9 @@ bool ImportCapture( const ImportTools& tools, const std::string& in, const std::
 // ---------------------------------------------------------------- --convert
 
 // How far before a request's arrival its earliest event can land on the replay
-// clock. A batch is stamped when sealed, but its events happened up to a flush (or,
-// after an outage, much longer) earlier. Starting the replay clock this far ahead of
-// the capture's connection keeps every event inside the trace: Tracy drops zones
-// that fall before the trace starts.
+// clock. A batch is stamped when sealed, but its events can be a flush interval older,
+// or much older after an outage. Tracy drops zones from before the trace starts, so
+// the replay clock starts this far ahead of the capture's connection.
 int64_t ReplayLeadNs( const std::string& path )
 {
     tlb::RecordingReader reader;
@@ -361,7 +360,7 @@ int RunConvert( const Options& opt )
     if( tool.empty() ) return 1;
 
     std::string input = opt.convertIn;
-    std::string imported;  // the .tlrec made from a MicroProfiler capture, removed at the end
+    std::string imported;  // the .tlrec made from a MicroProfiler capture; removed unless --keep-raw
     std::error_code ec;
     if( !fs::is_regular_file( input, ec ) )
     {
@@ -370,7 +369,6 @@ int RunConvert( const Options& opt )
     }
     if( !IsRecordingFile( input ) )
     {
-        // Not a Tracy-Luau recording: treat it as a MicroProfiler capture.
         const ImportTools tools = FindImportTools( opt );
         if( !tools.problem.empty() )
         {
@@ -409,7 +407,7 @@ int RunConvert( const Options& opt )
     }
     const int64_t lead = ReplayLeadNs( input );
 
-    // A port of our own, so a live bridge (and its viewer) can keep running meanwhile.
+    // A port of its own, so a live bridge and its viewer can keep running.
     const int port = tlb::FreeLocalPort();
     if( port <= 0 )
     {
@@ -462,7 +460,7 @@ int RunConvert( const Options& opt )
         if( outcome.status == 400 ) rejected++;
     }
     const std::string problems = router.ProblemReport();
-    router.Shutdown();         // end every track, closing open zones
+    router.Shutdown();
     tracy::ShutdownProfiler();  // sends everything, then waits until tracy-capture has it all
     if( !problems.empty() ) std::printf( "the recording had some damage:\n%s", problems.c_str() );
 
@@ -582,8 +580,6 @@ int RunLive( const Options& opt )
     httplib::Server server;
     server.set_payload_max_length( 64 * 1024 * 1024 );
 
-    // One request holds one or more batches back to back: the server's own, then any
-    // it relayed from clients (docs/PROTOCOL.md).
     server.Post( "/ingest", [&]( const httplib::Request& req, httplib::Response& res ) {
         // A web page can send a plain cross-site POST to localhost, but not one with
         // this content type (that needs a CORS preflight, which we never approve).
@@ -602,7 +598,7 @@ int RunLive( const Options& opt )
 
     // MicroProfiler captures from Tracy.Capture's BridgeSink. Saved as-is, then
     // converted to .tracy in the background when Lute, the importer and tracy-capture
-    // are all here.
+    // were all found.
     const ImportTools importTools = FindImportTools( opt );
     const std::string captureTool = tlb::FindCaptureTool( opt.captureTool );
     const bool convertCaptures = opt.convertCaptures && importTools.problem.empty() && !captureTool.empty();
@@ -645,7 +641,7 @@ int RunLive( const Options& opt )
         std::printf( "capture saved: %s (%s)\n", path.string().c_str(), MegabytesOf( path.string() ).c_str() );
         res.set_content( "saved " + path.filename().string(), "text/plain" );
         if( !convertCaptures ) return;
-        // A fresh process converts it (this one's Tracy client is the live viewer's).
+        // A fresh process converts it: this one's Tracy client is the live viewer's.
         const std::string out = fs::path( path ).replace_extension( ".tracy" ).string();
         std::vector<std::string> args = { "--convert", path.string(), out, "--capture-tool", captureTool,
                                           "--lute", importTools.lute, "--importer", importTools.importer };
@@ -716,7 +712,6 @@ int RunLive( const Options& opt )
             return 0;
         }
         std::printf( "writing %s from %llu requests...\n", opt.record.c_str(), (unsigned long long)recorder.Records() );
-        // A fresh process converts it: this one's Tracy client was the live viewer's.
         tlb::ChildProcess convert;
         std::string error;
         if( !tlb::SpawnProcess( tlb::SelfPath(),

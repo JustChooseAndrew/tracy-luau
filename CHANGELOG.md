@@ -52,4 +52,4 @@ The first public release. The module and the bridge share this version.
 
 Developed before the first release: streaming from Studio (phase 1), the binary
 protocol and batching (2), plots, messages, colors and client tracks (3), and
-`--record` and the MicroProfiler importer (4). See the README's Roadmap.
+`--record` and the MicroProfiler importer (4).

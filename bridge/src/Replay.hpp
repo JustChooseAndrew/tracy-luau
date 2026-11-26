@@ -1,9 +1,8 @@
 // Replays Tracy.luau batches into Tracy.
 //
 // A Lane is one OS thread, which Tracy shows as one track ("Roblox Server").
-// Each Luau VM run (a session) is bound to a lane. When a playtest stops and a new
-// one starts, the new session reuses the idle lane, so repeated playtests stay on
-// one track instead of piling up new ones.
+// Each Luau VM run (a session) is bound to a lane. A new session reuses an idle lane
+// of the same kind, so repeated playtests stay on one track.
 #pragma once
 
 #include "Protocol.hpp"
@@ -45,8 +44,8 @@ private:
 };
 
 // Source locations are what Tracy groups zone statistics by. One per
-// (name, track label, color). Deliberately never freed: Tracy can still read
-// them while the process exits.
+// (name, track label, color). Never freed: Tracy can still read them while the
+// process exits.
 class SrcLocCache
 {
 public:
@@ -61,7 +60,7 @@ struct IngestResult
 {
     int status = 204;  // 204 ok, 200 + "resync", 400 + reason
     std::string body;
-    // The session's clock offset after this batch, so a server batch can serve as the
+    // The session's clock offset after this batch. A server batch's offset is the
     // reference for the client batches it relayed in the same request.
     bool haveOffset = false;
     int64_t offsetNs = 0;
@@ -100,8 +99,8 @@ public:
 
     // Called from HTTP threads. Blocks until this lane's thread has replayed the batch,
     // so the HTTP response can report problems back to Luau. `body` is one batch,
-    // header included. `nowNs` is when the request arrived (Tracy's clock): live, the
-    // real time; when converting a recording, the recorded arrival on a virtual clock.
+    // header included. `nowNs` is the request's arrival on Tracy's clock (when
+    // converting a recording, the recorded arrival on a virtual clock).
     IngestResult Submit( std::string body, const BatchHeader& header, ClockRef ref, int64_t nowNs );
 
     uint8_t Source() const { return m_source; }
@@ -168,8 +167,8 @@ private:
     std::vector<const char*> m_prefixedNames;  // plots and named frame sets
     std::unordered_map<uint64_t, const tracy::SourceLocationData*> m_colorLocs;  // (id << 32) | color
     // One entry per zone Luau has open: its start, and the viewer connection it was
-    // sent to (kNotSent if none; a zone begun before the viewer connected is never
-    // ended in Tracy).
+    // sent to (kNotSent if none). A zone's end goes only to the connection that got
+    // its begin.
     struct OpenZone
     {
         int64_t begin;
@@ -208,7 +207,8 @@ private:
     int32_t m_namedTracks = 0;
 };
 
-// One HTTP request: one or more batches back to back (docs/PROTOCOL.md).
+// One HTTP request: one or more batches back to back, the server's own first, then
+// any it relayed from clients (docs/PROTOCOL.md).
 struct RequestOutcome
 {
     int status = 204;  // 204 all fine, 200 + notes, 400 + reason

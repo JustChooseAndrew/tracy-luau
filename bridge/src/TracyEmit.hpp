@@ -1,13 +1,12 @@
 // Emits Tracy events with caller-supplied timestamps.
 //
 // Tracy's public macros (ZoneScoped, FrameMark, TracyPlot) stamp events with the
-// current time. Roblox events reach the bridge ~150 ms after they happened, so we
-// write the same queue items those macros write, but with the Luau-recorded time
-// mapped onto Tracy's clock. This uses Tracy's internal queue API, which is why the
-// bridge pins one Tracy version (see third_party/tracy/VERSION.txt).
+// current time, but Roblox events reach the bridge ~150 ms late. These write the same
+// queue items with the Luau-recorded time mapped onto Tracy's clock instead. That
+// takes Tracy's internal queue API, so the bridge pins one Tracy version
+// (third_party/tracy/VERSION.txt).
 //
-// Zones go to the calling thread's queue, so every replay lane runs on its own OS
-// thread and shows up in the viewer as its own track.
+// Zones go to the calling thread's queue, so each replay lane needs its own OS thread.
 #pragma once
 
 #include "client/TracyProfiler.hpp"
@@ -17,8 +16,7 @@
 namespace tlb::emit
 {
 
-// Tracy's clock. The bridge builds with TRACY_DISALLOW_HW_TIMER, so this is a
-// steady clock in nanoseconds and Luau seconds map onto it with one offset.
+// Tracy's clock: steady nanoseconds, since the bridge builds with TRACY_DISALLOW_HW_TIMER.
 inline int64_t Now()
 {
     return tracy::Profiler::GetTime();
@@ -97,8 +95,8 @@ inline void ZoneText( const char* text, size_t length )
     TracyQueueCommit( zoneTextFatThread );
 }
 
-// Plot display settings. Tracy keeps these and re-sends them to every viewer that
-// connects later, so one call per plot name is enough.
+// Plot display settings. Tracy keeps them and sends them to viewers that connect
+// later, so one call per plot name is enough, viewer or not.
 inline void ConfigurePlot( const char* name, uint8_t format, bool step, bool fill, uint32_t color )
 {
     tracy::Profiler::ConfigurePlot( name, tracy::PlotFormatType( format ), step, fill, color );

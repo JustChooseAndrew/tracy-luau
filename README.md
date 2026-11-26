@@ -436,6 +436,15 @@ tool versions are in `aftman.toml`.
 | 5 | Release: CI-built Windows/macOS/Linux binaries, Wally and Pesde packages | tooling **done**; first release once the repository is on GitHub |
 | Plugin | Studio toolbar button, connection light, auto-injecting the module | next |
 
+## Trademarks and affiliation
+
+- Luau is a trademark of Roblox Corporation. Roblox is a trademark of Roblox
+  Corporation.
+- **Independent project.** Tracy-Luau is not affiliated with or endorsed by Roblox, the
+  Luau team, or the Tracy project.
+- **Tracy** is developed by Bartosz Taudul and contributors
+  ([wolfpld/tracy](https://github.com/wolfpld/tracy)).
+
 ## Licenses
 
 - **Tracy-Luau** is MIT licensed ([LICENSE](LICENSE)).

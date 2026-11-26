@@ -141,6 +141,12 @@ jobs:
             on { print }
           ' CHANGELOG.md > notes.md
           test -s notes.md || echo "See CHANGELOG.md." > notes.md
+          {
+            echo
+            echo "---"
+            echo "Luau is a trademark of Roblox Corporation. Tracy-Luau is an independent project,"
+            echo "not affiliated with or endorsed by Roblox, the Luau team, or the Tracy project."
+          } >> notes.md
 
       - name: Create release
         env:

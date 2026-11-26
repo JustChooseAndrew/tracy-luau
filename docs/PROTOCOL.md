@@ -8,12 +8,11 @@ client VM ──RemoteEvent "TracyRelay"──► server VM ──HTTP POST /ing
             (client batches, clock sync)           (server batch + relayed client batches)
 ```
 
-- **Server.** It posts to the bridge over HTTP: `POST /ingest` with
+- **The server** posts to the bridge: `POST /ingest`, with
   `Content-Type: application/octet-stream`.
-- **Clients.** Roblox doesn't allow HTTP from client scripts. A client sends its batches
-  to the server over a RemoteEvent named `TracyRelay`, which the server creates under
-  the `Tracy` ModuleScript. The server forwards them inside its own requests, so clients
-  cost nothing from the server's HttpService budget.
+- **Clients** can't make HTTP requests. They send batches to the server over the
+  `TracyRelay` RemoteEvent, which the server creates under the `Tracy` module. The
+  server forwards them inside its own requests.
 
 ## Request
 
@@ -54,10 +53,8 @@ Events follow the header back to back, in the order they happened. `time` is the
 | `0x0A` | TRACK_NAME | `len u16, len bytes` | 3 + len |
 | `0x0B` | ZONE_TEXT | `len u16, len bytes`, text added to the innermost open zone | 3 + len |
 
-`ZONE_TEXT` comes from the importer (MicroProfiler labels) and from `Tracy.luau`. When a
-zone is still open at the end of a frame (it yielded or errored before `ZoneEnd`), the
-module sends a `ZONE_TEXT` saying so, then a `ZONE_END` at that moment, and ignores the
-zone's late `ZoneEnd`.
+The importer sends MicroProfiler labels as `ZONE_TEXT`. The module uses it to label a
+zone it closed because the zone was still open at the end of a frame.
 
 **PLOT_CONFIG fields.**
 - `format`: 0 Number, 1 Memory (bytes), 2 Percentage.
@@ -70,7 +67,7 @@ zone's late `ZoneEnd`.
 | 204 | | every batch accepted |
 | 200 | one line per batch that needs attention | see the table below |
 | 400 | reason | the request couldn't be read at all: empty, bad magic or version, or a bad first header |
-| 415 | | `Content-Type` isn't `application/octet-stream`. A web page can send a plain cross-site POST to localhost, but not one with this type, so this keeps browsers out |
+| 415 | | `Content-Type` isn't `application/octet-stream`. Web pages can't send this type cross-site, so this keeps browsers out |
 
 The 200 response lines:
 
@@ -89,43 +86,35 @@ The 200 response lines:
 - **Gaps.** A sequence number that skips means batches were lost. The bridge closes
   every open zone on that track, so later `ZONE_END`s can't close the wrong zone. A
   `ZONE_END` with no open zone is dropped and counted (`droppedEnds` in `/status`).
-- **Re-registration.** After any loss, Luau rebuilds its pending batch with every name
-  and plot config at the front. That covers registrations that went down with the lost
-  batch. When the bridge comes back after an outage, the server tells every client to
-  do the same.
+- **Re-registration.** After any loss, the module puts every name and plot config at
+  the front of its next batch. When the bridge comes back, the server tells every
+  client to do the same.
 - **Server clock.** On a server session's first batch, the bridge sets
-  `offset = bridgeNow − flushClock` and keeps it for the whole session. Durations are
-  exactly what Luau measured. Absolute placement is off by the transit time, which is
-  well under a millisecond on localhost.
+  `offset = bridgeNow − flushClock` and keeps it for the whole session. Durations stay
+  exactly as measured.
 - **Client clock sync.** A client pings the server 8 times over the relay:
   1. The client sends `"sync", c0`.
   2. The server answers `"sync", c0, s`.
   3. The client receives the answer at `c1`.
 
-  The client then uses `clockOffset = s − (c0 + c1)/2`, taken from the ping with the
-  lowest round trip. If that is within half a round trip of zero, the two VMs share a
-  clock. Play Solo runs both in one process, so there it is exactly 0.
+  The client uses `clockOffset = s − (c0 + c1)/2` from the ping with the lowest round
+  trip, or exactly 0 when that's within half a round trip of zero, as in Play Solo.
 - **Client placement.** The bridge maps a relayed client batch with the server
   session's offset from the same request, plus the batch's `clockOffset`. Client and
   server tracks land on one timeline.
-- **Tracks.** Each session is replayed on one bridge thread (a "lane"), which Tracy
-  shows as one track: `Roblox Server`, `Roblox Client 1`, and so on. A new session
-  takes over a lane of the same source once that lane's session sent `FINAL` or has
-  been silent for 5 s, so repeated playtests reuse their tracks. The server sends
-  `FINAL` for a client's session when that player leaves, or when the server shuts
-  down.
+- **Tracks.** Each session gets one track: `Roblox Server`, `Roblox Client 1`, and so
+  on. A new session reuses a track once the old one sent `FINAL` or went quiet for 5 s.
+  The server sends `FINAL` for a client when that player leaves, or when it shuts down.
 - **Global names get a track prefix.** Plots and named frame sets are global in Tracy,
   so the bridge prefixes them with the track: `Server: Lua heap`, `Client 1: Physics`.
   The server's unnamed frames use Tracy's default frame set. A client's unnamed frames
   go to a set named after the client (`Client 1`).
 - **Late batches.** Anything a session sends after `FINAL` is ignored.
-- **Zero-length zones.** `os.clock()` ticks every 100 ns, so a zone can end on the tick
-  it began. Tracy leaves zero-length zones out of its statistics. The bridge ends them
-  1 ns after they begin, so they still count.
+- **Zero-length zones.** Tracy leaves these out of its statistics, so the bridge ends
+  them 1 ns after they begin.
 - **Timestamp validation.** A `time`, `flushClock`, or `clockOffset` that is NaN,
   infinite, or outside ±1e8 s makes the batch malformed. A NaN or infinite plot value
   skips just that sample.
-
 - **Named tracks.** A source-255 session takes the track its `TRACK_NAME` gives, such
   as `RBX Main` or `RBX Worker A`, and only reuses a track with that name. The first
   server track or named track created owns Tracy's default frame set.
@@ -139,15 +128,10 @@ file:   "TLUAREC1" | u32 protocol version | u32 reserved
 record: u64 arrival ns since the first record | u32 length | request body
 ```
 
-**How conversion works.**
-1. The bridge starts a private Tracy client on a free port and points `tracy-capture`
-   at it.
-2. It replays each request at `replayStart + arrival` on a virtual clock. Tracks, clock
-   offsets and lane reuse therefore come out exactly as they did live, as fast as the
-   file can be read.
-3. `replayStart` begins a little after the capture connects. The bridge pre-scans the
-   recording for how far before its seal any batch's earliest event lies, and leaves
-   that much room. Tracy drops zones that fall before a trace's start.
+**How conversion works.** The bridge points `tracy-capture` at a private Tracy client,
+then replays each request at `replayStart + arrival` on a virtual clock, so the result
+matches what the live viewer would have shown. `replayStart` leaves room for the
+earliest event, because Tracy drops zones from before a trace starts.
 
 The MicroProfiler importer (`tools/microprofiler/gprx2tlrec.luau`) writes this same
 format. It uses one named session per MicroProfiler thread and one request per frame.
@@ -162,51 +146,35 @@ format. It uses one named session per MicroProfiler thread and one request per f
 | server → client | `"resync"` | re-send every registration |
 | server → client | `"status", connected` | whether the server is reaching the bridge |
 
-## Changes from the original plan
-
-- **Timestamps are `f64` seconds, not `u64` nanoseconds.** Luau's `buffer` library has
-  no 64-bit integer write. Splitting a value into two `u32`s would add math to every
-  event. An `f64` of `os.clock()` is the same 8 bytes, costs nothing to produce, and
-  keeps sub-nanosecond precision for any realistic uptime. The bridge does the
-  conversion.
-- **Added a batch header.** It carries the session, sequence, clocks, and length. The
-  bridge needs them for loss detection, playtest boundaries, clock mapping, and several
-  batches per request.
-- **Clients relay through the server.** The plan's `SourceID` header byte is there, but
-  HttpService only works on the server, so the server forwards client batches. It also
-  assigns each client's number.
-- **New events.** `0x06 FRAME_MARK_NAMED` (`FrameMark(name)`), `0x07 ZONE_BEGIN_COLOR`,
-  `0x08 MESSAGE`, `0x09 PLOT_CONFIG`, and for imports `0x0A TRACK_NAME` and
-  `0x0B ZONE_TEXT`.
-
 ## Status endpoint
 
-`GET /status` returns JSON: bridge version, protocol, Tracy version, whether a viewer is
-connected, and per-track counters (`label`, `source`, `session`, `batches`, `events`,
-`gaps`, ...). The Studio plugin's connection light will read it.
+`GET /status` returns JSON with:
+- the bridge, protocol and Tracy versions;
+- whether a viewer is connected;
+- per-track counters (`label`, `source`, `session`, `active`, `batches`, `events`,
+  `gaps`, ...).
 
 ## Captures endpoint
 
-`POST /capture` takes one MicroProfiler capture from `Tracy.Capture.BridgeSink` (or
-anything else) and saves it.
+`POST /capture` saves one MicroProfiler capture.
 
 | Part | Content |
 |---|---|
 | `Content-Type` | `application/octet-stream`, or 415 (the same guard against web pages as `/ingest`) |
-| `X-Tracy-Capture` | optional: the capture info as JSON. `Tracy.Capture` base64-encodes it, because HttpService refuses `{` in header values. Plain JSON is accepted too |
+| `X-Tracy-Capture` | optional: the capture info as JSON, plain or base64-encoded. HttpService refuses `{` in headers, so `Tracy.Capture` sends base64 |
 | body | the capture: any container LibMP reads |
 
 **Responses.**
-- **200** `saved <file>`. The capture is written to `--captures DIR` (default
-  `captures/`) as `<Id>.gprx`, with the info beside it as `<Id>.json`. The name comes
-  from the info's `Id` when that's a plain token (letters, digits, `-`, `_`), otherwise
-  a UTC timestamp. A taken name gets `-2`, `-3`, and so on.
+- **200** `saved <file>`. The capture goes to `--captures DIR` (default `captures/`) as
+  `<Id>.gprx`, with the info as `<Id>.json`.
+  - `<Id>` is the info's `Id` if it's a plain token (letters, digits, `-`, `_`), else a
+    UTC timestamp.
+  - A name that's already taken gets `-2`, `-3`, and so on.
 - **400** for an empty body.
 
-**Conversion.** When Lute, the importer (with LibMP beside it) and `tracy-capture` are
-all found, the bridge also converts each capture to `<Id>.tracy` in the background. It
-uses a separate process, so the live viewer is unaffected. `--no-convert-captures`
-turns that off.
+When Lute, the importer (with LibMP beside it) and `tracy-capture` are all available,
+each capture is also converted to `<Id>.tracy` in the background. Pass
+`--no-convert-captures` to turn that off.
 
 ## DataStore layout (`Tracy.Capture.DataStoreSink`)
 
@@ -215,6 +183,5 @@ turns that off.
 | `<Id>/1` ... `<Id>/N` | base64 of consecutive slices (2.4 MB each, at most) of the capture |
 | `<Id>` | the capture info as JSON, plus `Parts` (N), `Format` (`libmp-compressed`) and `Version` (1). Written last, so its presence marks a complete capture |
 
-`tools/fetch_captures.py` lists the keys through Open Cloud. It treats keys without a
-`/` as captures, reassembles the parts, and checks the total against the info's
-`Bytes`.
+`tools/fetch_captures.py` lists the keys through Open Cloud, reassembles each capture,
+and checks its size against `Bytes`.

@@ -107,11 +107,8 @@ python tools/fetch_captures.py --universe <id> --convert
 
 - **Examples.** The [examples](examples) folder has timed demos whose numbers you can
   check against the code, a part fountain with real costs, and a live-capture setup.
-- **The guide.** [docs/GUIDE.md](docs/GUIDE.md) covers everything else:
-  - the full API and the rules for zones;
-  - live captures;
-  - recording and dump conversion;
-  - costs and limits.
+- **The guide.** [docs/GUIDE.md](docs/GUIDE.md) covers the full API, live captures,
+  recording, and dump conversion.
 - **Contributing.** [docs/DEVELOPING.md](docs/DEVELOPING.md) covers building the bridge
   and running the tests.
 

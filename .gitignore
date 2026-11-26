@@ -1,0 +1,24 @@
+# build output
+/build/
+/bridge/build/
+/out/
+
+# local-only dev tooling, the downloaded Tracy viewer, and captures
+/.dev/
+/.tools/
+*.tracy
+*.tlrec
+*.gprx
+
+# LibMP is fetched by each user (MIT, github.com/Roblox/libmp), not vendored
+/tools/microprofiler/LibMP.luau
+
+# Python
+__pycache__/
+*.pyc
+
+# editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

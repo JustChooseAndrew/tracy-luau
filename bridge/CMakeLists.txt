@@ -14,7 +14,7 @@ endif()
 find_package(Threads REQUIRED)
 
 # ---------------------------------------------------------------- Tracy client
-# Vendored, unmodified Tracy client (third_party/tracy/VERSION). The viewer must be
+# Vendored, unmodified Tracy client (third_party/tracy/VERSION.txt). The viewer must be
 # the same Tracy version, or it refuses the connection.
 add_library(TracyClient STATIC third_party/tracy/public/TracyClient.cpp)
 target_include_directories(TracyClient SYSTEM PUBLIC third_party/tracy/public)

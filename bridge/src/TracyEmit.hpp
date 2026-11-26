@@ -4,7 +4,7 @@
 // current time. Roblox events reach the bridge ~150 ms after they happened, so we
 // write the same queue items those macros write, but with the Luau-recorded time
 // mapped onto Tracy's clock. This uses Tracy's internal queue API, which is why the
-// bridge pins one Tracy version (see third_party/tracy/VERSION).
+// bridge pins one Tracy version (see third_party/tracy/VERSION.txt).
 //
 // Zones go to the calling thread's queue, so every replay lane runs on its own OS
 // thread and shows up in the viewer as its own track.

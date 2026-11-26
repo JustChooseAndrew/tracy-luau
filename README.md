@@ -22,9 +22,9 @@ generation, ECS schedulers, and anything else that eats frame time.
 ## Usage
 
 **The module.** Install it in one of three ways:
-- as a [Wally](https://wally.run/) package: `Tracy = "justchooseandrew/tracy-lua@0.5.0"`;
+- as a [Wally](https://wally.run/) package: `Tracy = "justchooseandrew/tracy-luau@0.5.0"`;
 - as `Tracy.rbxm` from the
-  [latest release](https://github.com/JustChooseAndrew/tracy-lua/releases/latest),
+  [latest release](https://github.com/JustChooseAndrew/tracy-luau/releases/latest),
   dropped into `ReplicatedStorage`;
 - from source, with Rojo.
 

@@ -44,7 +44,7 @@ The first public release. The module and the bridge share this version.
 
 ### Project
 - **MIT license.**
-- **Wally (`justchooseandrew/tracy-lua`) and Pesde (`justchooseandrew/tracy_lua`)
+- **Wally (`justchooseandrew/tracy-luau`) and Pesde (`justchooseandrew/tracy_luau`)
   manifests.**
 - **`aftman.toml`, StyLua and selene configs, and CI.**
 

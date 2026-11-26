@@ -16,8 +16,8 @@
 
 | How | |
 |---|---|
-| Wally | `Tracy = "justchooseandrew/tracy-lua@0.5.0"` under `[dependencies]` |
-| Pesde | `pesde add justchooseandrew/tracy_lua` (Pesde names can't contain hyphens) |
+| Wally | `Tracy = "justchooseandrew/tracy-luau@0.5.0"` under `[dependencies]` |
+| Pesde | `pesde add justchooseandrew/tracy_luau` (Pesde names can't contain hyphens) |
 | Model file | drag `Tracy.rbxm` from a release into `ReplicatedStorage` |
 | Rojo / by hand | sync `default.project.json`, or copy `src/Tracy/init.luau` into a ModuleScript `Tracy` and `src/Tracy/Capture.luau` into a child ModuleScript `Capture` |
 

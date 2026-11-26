@@ -6,7 +6,7 @@
 	Tracy.luau: streams profiler data from Roblox to the Tracy profiler
 	(https://github.com/wolfpld/tracy) through the local tracy-roblox-bridge.
 
-	Part of Tracy-Luau (https://github.com/JustChooseAndrew/tracy-lua), MIT licensed.
+	Part of Tracy-Luau (https://github.com/JustChooseAndrew/tracy-luau), MIT licensed.
 	An independent project, not affiliated with or endorsed by Roblox, the Luau
 	team, or the Tracy project. Luau is a trademark of Roblox Corporation.
 

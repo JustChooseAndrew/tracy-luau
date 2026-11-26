@@ -1,12 +1,12 @@
 [package]
-name = "justchooseandrew/tracy-lua"
+name = "justchooseandrew/tracy-luau"
 description = "Tracy profiler for Roblox: stream Luau zones, plots and messages into Tracy, and turn live-game MicroProfiler captures into Tracy traces"
 version = "0.5.0"
 license = "MIT"
 authors = ["justchooseandrew"]
 realm = "shared"
 registry = "https://github.com/UpliftGames/wally-index"
-repository = "https://github.com/justchooseandrew/tracy-lua"
+repository = "https://github.com/justchooseandrew/tracy-luau"
 # Only the Luau module ships; default.project.json maps it (src/Tracy).
 exclude = ["bridge", "bench", "docs", "examples", "tools", "build", ".github", "aftman.toml", "pesde.toml",
            "selene.toml", "stylua.toml", "luau_extras.yml", "CHANGELOG.md"]

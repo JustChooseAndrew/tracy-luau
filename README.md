@@ -148,7 +148,7 @@ Thanks to everyone who has helped with Tracy-Luau.
 
 Tracy-Luau is MIT licensed. It's an independent project, not affiliated with or
 endorsed by Roblox, the Luau team, or the Tracy project. Luau is a trademark of Roblox
-Corporation.
+Corporation. Tracy-Luau follows Luau's naming guidelines.
 
 ## AI transparency
 

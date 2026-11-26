@@ -137,7 +137,7 @@ Studio server ───── HTTP POST ─────► tracy-roblox-bridge �
 ## Credits
 
 Created by [JustChooseAndrew](https://github.com/JustChooseAndrew), and built alongside
-abcgameryt.
+[ABC2gameYT](https://github.com/ABC2gameYT).
 
 Built on the work of others:
 - [Tracy](https://github.com/wolfpld/tracy), by Bartosz Taudul and contributors;
